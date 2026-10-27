@@ -1,5 +1,5 @@
 {
-  "name": "rdm",
+  "name": "flash",
   "private": true,
   "scripts": {
     "tauri": "tauri",
@@ -8,5 +8,6 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.12.4"
-  }
+  },
+  "packageManager": "pnpm@10.23.0"
 }

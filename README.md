@@ -17,11 +17,11 @@ An IDM-style download manager. It downloads each file over several parallel conn
 Build the `.app` and `.dmg`:
 
 ```bash
-npm install
+pnpm install
 ```
 
 ```bash
-npm run build
+pnpm build
 ```
 
 The output is in `target/release/bundle/macos/Flash.app` (and `bundle/dmg/`). Drag `Flash.app` into `/Applications`.
@@ -35,7 +35,7 @@ xattr -dr com.apple.quarantine /Applications/Flash.app
 To run it in development mode with live reload of the UI:
 
 ```bash
-npm run dev
+pnpm dev
 ```
 
 Closing the window keeps Flash running in the menu bar, where it shows the total download speed. Click the menu bar icon for a small panel with live progress, pause and resume buttons, and the speed profiles. Right-click it for the menu, including **Quit Flash**.
