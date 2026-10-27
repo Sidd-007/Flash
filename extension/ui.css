@@ -1,0 +1,139 @@
+/* Same black & white system as the RDM app. */
+:root {
+  --bg: #fafaf9; --raise: #ffffff;
+  --line: rgba(10, 10, 10, 0.08); --line-strong: rgba(10, 10, 10, 0.16);
+  --text: #0a0a0a; --muted: #6f6f6b; --faint: #a8a8a3;
+  --hover: rgba(10, 10, 10, 0.035); --selected: rgba(10, 10, 10, 0.065);
+  --solid: #0a0a0a; --solid-text: #fafaf9; --danger: #d4362c; --ok: #0a0a0a;
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", sans-serif;
+  --mono: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, monospace;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #09090b; --raise: #141416;
+    --line: rgba(255, 255, 255, 0.07); --line-strong: rgba(255, 255, 255, 0.14);
+    --text: #fafafa; --muted: #8b8b93; --faint: #4b4b52;
+    --hover: rgba(255, 255, 255, 0.035); --selected: rgba(255, 255, 255, 0.07);
+    --solid: #fafafa; --solid-text: #09090b; --danger: #ff6159; --ok: #fafafa;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 13px/1.45 var(--sans); letter-spacing: -0.005em; -webkit-font-smoothing: antialiased;
+}
+.mono { font-family: var(--mono); }
+.muted { color: var(--muted); font-size: 12px; }
+a { color: var(--text); text-underline-offset: 3px; text-decoration-color: var(--line-strong); }
+code { font: 11.5px var(--mono); }
+
+/* labels */
+h1 { font-size: 16px; font-weight: 600; letter-spacing: -0.01em; margin: 0; }
+h3 {
+  font: 10.5px/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--faint); font-weight: 400; margin: 18px 0 10px;
+}
+.brand { font: 600 13px var(--mono); letter-spacing: 0.02em; }
+.caret { color: var(--muted); animation: blink 1.1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+
+/* controls */
+button {
+  font: inherit; color: inherit; background: transparent;
+  border: 1px solid var(--line-strong); border-radius: 8px; padding: 5px 11px;
+  cursor: pointer; white-space: nowrap; transition: background 0.12s, opacity 0.12s;
+}
+button:hover:not(:disabled) { background: var(--hover); }
+button:disabled { opacity: 0.4; cursor: default; }
+button.solid { background: var(--solid); color: var(--solid-text); border-color: var(--solid); font-weight: 550; }
+button.solid:hover:not(:disabled) { background: var(--solid); opacity: 0.88; }
+button.link { border: 0; padding: 4px 0; color: var(--muted); font: 11.5px var(--mono); letter-spacing: 0.02em; }
+button.link:hover { color: var(--text); background: transparent !important; }
+button.tiny { font: 10.5px var(--mono); letter-spacing: 0.06em; text-transform: uppercase; padding: 3px 8px; }
+kbd {
+  font: 10px/1 var(--mono); border: 1px solid currentColor; border-radius: 4px;
+  padding: 2px 4px; opacity: 0.55; margin-left: 6px;
+}
+
+input[type=text], input[type=number], textarea, select {
+  font: inherit; color: var(--text); background: var(--raise);
+  border: 1px solid var(--line-strong); border-radius: 8px; padding: 6px 9px; outline: none; width: 100%;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+input::placeholder, textarea::placeholder { color: var(--faint); }
+input:focus, textarea:focus, select:focus { border-color: var(--text); box-shadow: 0 0 0 3px var(--selected); }
+textarea { font: 12px/1.6 var(--mono); resize: vertical; }
+select {
+  appearance: none; padding-right: 28px; cursor: pointer;
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 15px) 50%, calc(100% - 11px) 50%;
+  background-size: 4px 4px; background-repeat: no-repeat;
+}
+input[type=checkbox] {
+  appearance: none; width: 14px; height: 14px; margin: 0; flex-shrink: 0;
+  border: 1px solid var(--line-strong); border-radius: 4px; background: var(--raise);
+  display: grid; place-items: center; cursor: pointer;
+}
+input[type=checkbox]:checked { background: var(--solid); border-color: var(--solid); }
+input[type=checkbox]:checked::after {
+  content: ""; width: 7px; height: 4px; margin-top: -2px;
+  border: solid var(--solid-text); border-width: 0 0 1.6px 1.6px; transform: rotate(-45deg);
+}
+.check { display: flex; gap: 9px; align-items: center; margin: 8px 0; cursor: pointer; }
+.field { display: flex; flex-direction: column; gap: 5px; margin: 10px 0; }
+.field > span { font: 10px var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.field.short input { width: 140px; }
+.row { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.error { color: var(--danger); font: 11.5px/1.5 var(--mono); margin: 6px 0; }
+#token { font-family: var(--mono); font-size: 12px; }
+
+.status { display: inline-flex; align-items: center; gap: 6px; font: 10.5px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--faint); }
+.status.ok { color: var(--text); }
+.status.ok::before { background: var(--ok); box-shadow: 0 0 0 3px var(--selected); }
+.status.bad { color: var(--danger); }
+.status.bad::before { background: var(--danger); }
+
+/* popup */
+body.popup { width: 340px; padding: 14px 16px 12px; }
+.popup header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.popup ul { list-style: none; padding: 0; margin: 0; }
+.popup li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); }
+.popup li:first-child { border-top: 0; }
+.popup li .stream { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 11.5px var(--mono); color: var(--muted); }
+.popup li .stream b { color: var(--text); font-weight: 500; }
+.popup footer { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; }
+
+/* options */
+body.options { padding: 20px 22px 24px; max-width: 580px; }
+.options header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 4px; }
+.options section { border-top: 1px solid var(--line); margin-top: 18px; }
+
+/* download dialog (overlay or small window) */
+body.dialog { padding: 18px 20px 16px; background: var(--raise); overflow: hidden; }
+.sheet-head { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; }
+.sheet-title { font-weight: 600; font-size: 14px; letter-spacing: -0.01em; }
+.sheet-head .meta { font: 11px var(--mono); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 330px; margin-top: 2px; }
+.badge {
+  width: 40px; height: 40px; border-radius: 9px; flex-shrink: 0;
+  display: grid; place-items: center;
+  border: 1px solid var(--text); color: var(--text);
+  font: 600 9.5px var(--mono); letter-spacing: 0.04em;
+}
+.form { display: grid; grid-template-columns: 64px 1fr; gap: 9px 12px; align-items: center; }
+.form > label:not(.check) { text-align: right; font: 10px var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.form .check { margin: 2px 0 0; }
+.picker { display: flex; gap: 6px; min-width: 0; }
+.picker select { flex: 1; min-width: 0; }
+.picker button { flex-shrink: 0; font: 10.5px var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
+.dialog .error { margin: 10px 0 0 76px; }
+.actions { display: flex; align-items: center; gap: 8px; margin-top: 16px; }
+.actions .spacer { flex: 1; }
+button.wide { width: 100%; margin: 6px 0 2px; padding: 8px 12px; }
+.form select { min-width: 0; }
+
+/* Already downloaded: a quiet warning above the buttons. */
+.dupe { margin: 12px 0 0; padding: 7px 10px; border: 1px solid var(--line-strong); border-radius: 8px;
+  font-size: 12px; line-height: 1.55; color: var(--text); }
+.dupe .muted { font: 11px var(--mono); }

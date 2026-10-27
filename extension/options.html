@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="ui.css">
+</head>
+<body class="options">
+  <header>
+    <h1>RDM <span class="muted mono">extension</span></h1>
+    <span class="brand">rdm<span class="caret">_</span></span>
+  </header>
+
+  <section>
+    <h3>Pairing</h3>
+    <p class="muted">In RDM, open <b>Settings → Browser</b> and copy the pairing token.</p>
+    <label class="field"><span>Token</span><input id="token" type="text" spellcheck="false" autocomplete="off" data-1p-ignore data-lpignore="true" placeholder="48 characters, e.g. 855a12…"></label>
+    <p id="token-hint" class="error" hidden></p>
+    <label class="field short"><span>Port</span><input id="port" type="number" min="1024" max="65535"></label>
+    <div class="row"><button id="test">Test connection</button><span id="result" class="muted"></span></div>
+  </section>
+
+  <section>
+    <h3>Taking over downloads</h3>
+    <label class="check"><input type="checkbox" id="enabled"> Send browser downloads to RDM</label>
+    <label class="check"><input type="checkbox" id="askInBrowser"> Show RDM's download dialog in the browser first</label>
+    <label class="check"><input type="checkbox" id="captureAll"> Take over every download (ignore the list below)</label>
+    <label class="field"><span>File types</span><textarea id="extensions" rows="3" spellcheck="false"></textarea></label>
+    <label class="field short"><span>Minimum size (MB)</span><input id="minSizeMB" type="number" min="0" step="1"></label>
+    <p class="muted">If RDM isn't running, the browser downloads the file as usual.</p>
+  </section>
+
+  <section>
+    <h3>Video sites</h3>
+    <label class="check"><input type="checkbox" id="videoButton"> Show a Download button on YouTube videos</label>
+  </section>
+
+  <div class="row"><button id="save" class="solid">Save</button><span id="saved" class="muted"></span></div>
+  <script src="common.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

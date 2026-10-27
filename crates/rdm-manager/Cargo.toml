@@ -1,0 +1,20 @@
+[package]
+name = "rdm-manager"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+chrono = "0.4"
+percent-encoding = "2"
+rdm-core = { path = "../rdm-core" }
+reqwest = "0.13.5"
+rusqlite = { version = "0.41.0", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1.54.1", features = ["full"] }
+tokio-util = "0.7"
+url = "2"
+
+[dev-dependencies]
+tempfile = "3"

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>RDM</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="panel.css">
+</head>
+<body class="panel-body">
+  <div class="card">
+    <header class="mb-head">
+      <span class="brand">rdm<span class="caret">_</span></span>
+      <div class="mb-speed">
+        <div class="mb-speed-value mono" id="mb-speed">idle</div>
+        <div class="mb-speed-sub mono" id="mb-count"></div>
+      </div>
+    </header>
+
+    <div class="tabs mb-profiles" id="mb-profiles" role="radiogroup" aria-label="Speed">
+      <button type="button" data-profile="full" role="radio">Full</button>
+      <button type="button" data-profile="background" role="radio" id="mb-bg">Background</button>
+      <button type="button" data-profile="paused" role="radio">Paused</button>
+    </div>
+
+    <div class="label mb-label" id="mb-label">Downloading</div>
+    <ul class="mb-list" id="mb-list"></ul>
+    <div class="mb-empty hidden" id="mb-empty">
+      <div class="mb-empty-art mono">[ ↓ ]</div>
+      Nothing downloading.
+    </div>
+
+    <footer class="mb-foot">
+      <button type="button" class="ghost" id="mb-add">Add URL</button>
+      <span class="spacer"></span>
+      <button type="button" class="solid" id="mb-open">Open RDM</button>
+    </footer>
+  </div>
+  <script src="panel.js"></script>
+</body>
+</html>

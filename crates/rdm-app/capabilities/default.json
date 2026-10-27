@@ -1,0 +1,15 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Main window and menu bar panel: app commands, events, window dragging, notifications",
+  "windows": [
+    "main",
+    "panel"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "notification:default",
+    "core:window:allow-hide"
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "name": "rdm",
+  "private": true,
+  "scripts": {
+    "tauri": "tauri",
+    "build": "cd crates/rdm-app && tauri build",
+    "dev": "cd crates/rdm-app && tauri dev"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.4"
+  }
+}

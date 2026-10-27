@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RDM</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="titlebar" data-tauri-drag-region>
+    <div class="traffic" data-tauri-drag-region></div>
+    <div class="brand mono" data-tauri-drag-region>rdm<span class="caret">_</span></div>
+    <label class="search">
+      <svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg>
+      <input id="search" type="search" placeholder="Search" spellcheck="false" autocomplete="off">
+      <kbd>/</kbd>
+    </label>
+    <div class="spacer" data-tauri-drag-region></div>
+    <button id="btn-palette" class="ghost mono" title="Command palette (⌘K)">Commands <kbd>⌘K</kbd></button>
+    <button id="btn-settings" class="ghost mono" title="Settings (⌘,)">Settings <kbd>⌘,</kbd></button>
+    <button id="btn-add" class="solid" title="Add download (⌘N)">
+      <svg viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg> Add URL <kbd>⌘N</kbd>
+    </button>
+  </header>
+
+  <div class="body">
+    <nav class="sidebar">
+      <div class="label">Library</div>
+      <ul id="nav-status"></ul>
+      <button type="button" class="label toggle" id="types-toggle" aria-expanded="false" aria-controls="types-body">
+        <span>Types</span>
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg>
+      </button>
+      <div class="collapse" id="types-body">
+        <div><ul id="nav-category" class="tree"></ul></div>
+      </div>
+      <div class="label">Insights</div>
+      <ul id="nav-insights"></ul>
+
+      <div class="meter">
+        <div class="label">Throughput</div>
+        <div class="meter-value mono"><span id="total-speed">0</span><small id="total-unit">B/s</small></div>
+        <canvas id="spark" height="36"></canvas>
+      </div>
+    </nav>
+
+    <main>
+      <section id="stats" class="stats hidden" aria-label="Download statistics"></section>
+      <div class="listbar">
+        <div class="list-title"><span id="list-title">All</span><span class="mono count" id="list-count"></span></div>
+        <div class="list-actions mono">
+          <button id="btn-resume" class="ghost" title="Resume (Space)" disabled>Resume <kbd>␣</kbd></button>
+          <button id="btn-pause" class="ghost" title="Pause (Space)" disabled>Pause <kbd>␣</kbd></button>
+          <button id="btn-delete" class="ghost" title="Remove (⌫)" disabled>Remove <kbd>⌫</kbd></button>
+          <span class="divider"></span>
+          <button id="btn-resume-all" class="ghost">Resume all</button>
+          <button id="btn-pause-all" class="ghost">Pause all</button>
+        </div>
+      </div>
+
+      <div class="list-wrap">
+        <ul id="rows" class="rows"></ul>
+        <div id="empty" class="empty hidden">
+          <pre class="mono art" aria-hidden="true">┌──────────┐
+│    ↓     │
+│  ─────   │
+└──────────┘</pre>
+          <p class="empty-title">Nothing here yet</p>
+          <p class="empty-sub">Paste a link anywhere with <kbd>⌘V</kbd>, press <kbd>⌘N</kbd>, or send one from the browser.</p>
+          <button class="solid" id="empty-add">Add URL</button>
+        </div>
+      </div>
+
+      <section id="detail" class="detail hidden">
+        <div class="detail-head">
+          <div class="detail-name" id="d-name"></div>
+          <div class="detail-actions mono">
+            <button id="d-open" class="ghost">Open</button>
+            <button id="d-reveal" class="ghost">Reveal</button>
+            <button id="d-copy" class="ghost">Copy URL</button>
+            <button id="d-relink" class="ghost hidden">Refresh link</button>
+          </div>
+        </div>
+        <canvas id="d-map" class="segmap" height="22"></canvas>
+        <dl class="kv">
+          <div><dt>Status</dt><dd id="d-status"></dd></div>
+          <div><dt>Progress</dt><dd id="d-progress"></dd></div>
+          <div><dt>Connections</dt><dd id="d-conns"></dd></div>
+          <div><dt>Checksum</dt><dd id="d-checksum"></dd></div>
+          <div class="wide"><dt>Source</dt><dd id="d-url"></dd></div>
+          <div class="wide"><dt>Saved to</dt><dd id="d-path"></dd></div>
+          <div class="limit-row">
+            <dt>Limit</dt>
+            <dd><input id="d-limit" type="text" placeholder="unlimited" spellcheck="false"><button id="d-limit-apply" class="ghost mono">Apply</button></dd>
+          </div>
+        </dl>
+      </section>
+    </main>
+  </div>
+
+  <footer class="statusbar mono">
+    <span id="status-left"></span>
+    <span id="status-right"></span>
+  </footer>
+
+  <div id="menu" class="menu hidden"></div>
+  <div id="tip" class="tip hidden" role="tooltip"></div>
+
+  <!-- Command palette -->
+  <dialog id="palette" class="palette">
+    <div class="palette-input">
+      <span class="mono prompt">›</span>
+      <input id="p-input" type="text" placeholder="Type a command or a download's name" spellcheck="false" autocomplete="off">
+      <kbd>esc</kbd>
+    </div>
+    <ul id="p-list" role="listbox"></ul>
+    <div class="palette-foot mono"><span>↑↓ move</span><span>↵ run</span><span>⌘K toggle</span></div>
+  </dialog>
+
+  <!-- Add -->
+  <dialog id="dlg-add">
+    <form method="dialog" id="form-add">
+      <div class="dlg-head">
+        <h2>New download</h2>
+        <span class="mono hint">patterns like <code>file[01-20].zip</code> work</span>
+      </div>
+      <textarea id="a-urls" rows="3" spellcheck="false" placeholder="https://"></textarea>
+      <div class="hint mono" id="a-count"></div>
+      <div class="note hidden" id="a-browser">From your browser · cookies included, so files behind a login work.</div>
+      <div class="grid">
+        <label class="field">
+          <span>Type</span>
+          <select id="a-kind">
+            <option value="">Auto-detect</option>
+            <option value="file">File</option>
+            <option value="video">Video site (yt-dlp)</option>
+            <option value="hls">Stream (HLS .m3u8)</option>
+          </select>
+        </label>
+        <label class="field" id="a-quality-field">
+          <span>Quality</span>
+          <select id="a-quality">
+            <option value="best">Best</option>
+            <option value="2160">2160p</option>
+            <option value="1440">1440p</option>
+            <option value="1080">1080p</option>
+            <option value="720">720p</option>
+            <option value="480">480p</option>
+            <option value="audio">Audio only</option>
+          </select>
+        </label>
+        <label class="field span2">
+          <span>Save to</span>
+          <div class="picker">
+            <select id="a-dir"></select>
+            <button type="button" id="a-choose" class="ghost mono">Choose…</button>
+          </div>
+        </label>
+        <label class="field span2">
+          <span>File name</span>
+          <input id="a-name" type="text" placeholder="from the server" spellcheck="false">
+        </label>
+        <label class="field">
+          <span>Connections</span>
+          <input id="a-conns" type="number" min="1" max="32">
+        </label>
+        <label class="field">
+          <span>Speed limit</span>
+          <input id="a-limit" type="text" placeholder="e.g. 2M" spellcheck="false">
+        </label>
+        <label class="field span2">
+          <span>Checksum</span>
+          <input id="a-checksum" type="text" placeholder="sha256:… or md5:… (optional)" spellcheck="false">
+        </label>
+      </div>
+      <div class="note dupe hidden" id="a-dupe"></div>
+      <div class="error hidden" id="a-error"></div>
+      <div class="buttons">
+        <label class="check"><input type="checkbox" id="a-start" checked> Start now</label>
+        <span class="spacer"></span>
+        <button type="button" class="ghost" id="a-cancel">Cancel</button>
+        <button type="submit" class="solid" id="a-submit">Download <kbd>↵</kbd></button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Refresh link -->
+  <dialog id="dlg-relink" class="narrow">
+    <form method="dialog" id="form-relink">
+      <div class="dlg-head">
+        <h2>Refresh link</h2>
+        <span class="mono hint" id="l-size"></span>
+      </div>
+      <p class="muted relink-name" id="l-name"></p>
+      <label class="field">
+        <span>New link to the same file</span>
+        <input id="l-url" type="text" placeholder="https://" spellcheck="false">
+      </label>
+      <div class="note waiting" id="l-wait"><span class="pulse"></span><span>Or start the download again in your browser. RDM will catch the new link and carry on from <b id="l-done"></b>.</span></div>
+      <div class="error hidden" id="l-error"></div>
+      <div class="buttons">
+        <span class="spacer"></span>
+        <button type="button" class="ghost" id="l-cancel">Cancel</button>
+        <button type="submit" class="solid" id="l-submit">Continue <kbd>↵</kbd></button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Remove -->
+  <dialog id="dlg-remove" class="narrow">
+    <form method="dialog">
+      <h2 id="r-title">Remove download?</h2>
+      <p class="muted" id="r-text">Unfinished data is deleted. Finished files stay on disk unless you choose otherwise.</p>
+      <label class="check"><input type="checkbox" id="r-files"> Also delete finished files from disk</label>
+      <div class="buttons">
+        <span class="spacer"></span>
+        <button type="button" class="ghost" id="r-cancel">Cancel</button>
+        <button type="submit" class="danger" id="r-ok">Remove</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Settings -->
+  <dialog id="dlg-settings" class="wide">
+    <form method="dialog" id="form-settings">
+      <div class="dlg-head"><h2>Settings</h2></div>
+      <div class="tabs mono" id="s-tabs">
+        <button type="button" data-tab="general" class="active">General</button>
+        <button type="button" data-tab="categories">Types</button>
+        <button type="button" data-tab="schedule">Schedule</button>
+        <button type="button" data-tab="browser">Browser</button>
+      </div>
+
+      <div class="tab" data-tab="general">
+        <label class="field">
+          <span>Download folder</span>
+          <div class="picker">
+            <input id="s-dir" type="text" spellcheck="false">
+            <button type="button" id="s-choose" class="ghost mono">Choose…</button>
+          </div>
+        </label>
+        <div class="grid three">
+          <label class="field"><span>At once</span><input id="s-max" type="number" min="1" max="20"></label>
+          <label class="field"><span>Connections</span><input id="s-conns" type="number" min="1" max="32"></label>
+          <label class="field"><span>Total limit</span><input id="s-limit" type="text" placeholder="unlimited" spellcheck="false"></label>
+        </div>
+        <div class="grid three">
+          <label class="field"><span>Background speed</span><input id="s-bglimit" type="text" placeholder="1M" spellcheck="false"></label>
+          <p class="hint span2 bg-hint">The “Background” profile in the menu bar caps all downloads at this speed.</p>
+        </div>
+        <label class="check"><input type="checkbox" id="s-notify"> Notify when downloads finish</label>
+        <label class="check"><input type="checkbox" id="s-clipboard"> Offer to download links I copy</label>
+        <label class="check"><input type="checkbox" id="s-awake"> Keep the Mac awake while downloading</label>
+        <label class="check"><input type="checkbox" id="s-retry"> Retry automatically after network drops</label>
+        <label class="check"><input type="checkbox" id="s-login"> Open at login, in the menu bar</label>
+        <div class="grid">
+          <label class="field">
+            <span>Video quality</span>
+            <select id="s-quality">
+              <option value="best">Best</option>
+              <option value="2160">2160p</option>
+              <option value="1440">1440p</option>
+              <option value="1080">1080p</option>
+              <option value="720">720p</option>
+              <option value="480">480p</option>
+              <option value="audio">Audio only</option>
+            </select>
+          </label>
+          <div class="field"><span>Helpers</span><div class="tools mono" id="s-tools"></div></div>
+        </div>
+      </div>
+
+      <div class="tab hidden" data-tab="categories">
+        <label class="check"><input type="checkbox" id="s-usecat"> Sort finished files into these folders inside the download folder</label>
+        <table class="cat-table">
+          <thead><tr><th>Type</th><th>Folder</th><th>Extensions</th><th></th></tr></thead>
+          <tbody id="s-cats"></tbody>
+        </table>
+        <button type="button" class="ghost mono" id="s-addcat">+ Add type</button>
+      </div>
+
+      <div class="tab hidden" data-tab="schedule">
+        <label class="check"><input type="checkbox" id="s-sched"> Only start queued downloads automatically between</label>
+        <div class="grid three">
+          <label class="field"><span>Start</span><input id="s-start" type="time"></label>
+          <label class="field"><span>Stop</span><input id="s-stop" type="time"></label>
+        </div>
+        <p class="muted">At the stop time, running downloads go back to the queue. Anything you start by hand ignores the schedule.</p>
+      </div>
+
+      <div class="tab hidden" data-tab="browser">
+        <label class="check"><input type="checkbox" id="s-confirm"> Ask in RDM before starting browser downloads the extension didn't already confirm</label>
+        <div class="grid">
+          <label class="field"><span>Port</span><input id="s-port" type="number" min="1024" max="65535"></label>
+          <span></span>
+          <label class="field span2">
+            <span>Pairing token</span>
+            <div class="picker">
+              <input id="s-token" type="text" readonly class="mono">
+              <button type="button" id="s-copy-token" class="ghost mono">Copy</button>
+              <button type="button" id="s-new-token" class="ghost mono">New</button>
+            </div>
+          </label>
+        </div>
+        <p class="muted mono" id="s-bridge-status"></p>
+        <ol class="steps muted">
+          <li>Chrome → <code>chrome://extensions</code> → turn on <b>Developer mode</b>.</li>
+          <li><b>Load unpacked</b> → choose the <code>extension</code> folder in the RDM project.</li>
+          <li>In the extension's options, paste the token and click <b>Test connection</b>.</li>
+        </ol>
+      </div>
+
+      <div class="error hidden" id="s-error"></div>
+      <div class="buttons">
+        <span class="spacer"></span>
+        <button type="button" class="ghost" id="s-cancel">Cancel</button>
+        <button type="submit" class="solid">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>

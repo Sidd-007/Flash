@@ -1,0 +1,17 @@
+[package]
+name = "rdm-cli"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "rdm"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+indicatif = "0.18"
+rdm-core = { path = "../rdm-core" }
+reqwest = "0.13.5"
+tokio = { version = "1.54.1", features = ["full"] }
+tokio-util = "0.7"

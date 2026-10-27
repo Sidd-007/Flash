@@ -1,0 +1,7 @@
+[workspace]
+resolver = "2"
+members = ["crates/rdm-core", "crates/rdm-cli", "crates/rdm-manager", "crates/rdm-app"]
+
+[profile.release]
+lto = "thin"
+strip = true

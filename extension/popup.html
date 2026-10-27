@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="ui.css">
+</head>
+<body class="popup">
+  <header>
+    <span class="brand">rdm<span class="caret">_</span></span>
+    <span id="status" class="status">checking</span>
+  </header>
+  <p id="status-detail" class="error" hidden></p>
+
+  <label class="check"><input type="checkbox" id="enabled"> Take over downloads from the browser</label>
+
+  <button id="page-video" class="solid wide" hidden>Download this video</button>
+
+  <h3>Streams on this page</h3>
+  <ul id="streams"></ul>
+  <p id="no-streams" class="muted">None yet. Play the video, then reopen this popup.</p>
+
+  <footer>
+    <span class="muted mono" id="version"></span>
+    <button id="options" class="link">Options →</button>
+  </footer>
+  <script src="common.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
