@@ -42,14 +42,32 @@ async function getSettings() {
  * worker read it; the YouTube content script asks the worker instead.
  */
 async function getToken() {
-  const { token } = await chrome.storage.local.get('token');
-  if (token) return token;
+  const [{ token }, { token: synced }] = await Promise.all([
+    chrome.storage.local.get('token'),
+    chrome.storage.sync.get('token'),
+  ]);
   // Older versions kept it in sync storage, which copies it to other browsers.
-  const { token: synced } = await chrome.storage.sync.get('token');
-  if (!synced) return '';
-  await chrome.storage.local.set({ token: synced });
-  await chrome.storage.sync.remove('token');
-  return synced;
+  // A local token is the newer one; either way the synced copy goes.
+  if (synced !== undefined) {
+    if (!token && synced) await chrome.storage.local.set({ token: synced });
+    await chrome.storage.sync.remove('token');
+  }
+  return token || synced || '';
+}
+
+/**
+ * Keeps content scripts out of local storage, where the token lives, so only
+ * extension pages and the background worker can read it. Older Chrome and
+ * Firefox may not support this for local storage; then the token is still
+ * only ever read by trusted pages.
+ */
+async function restrictLocalStorage() {
+  try {
+    await chrome.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function setToken(token) {

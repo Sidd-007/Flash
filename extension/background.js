@@ -197,7 +197,9 @@ if (chrome.downloads.onDeterminingFilename) {
   chrome.downloads.onCreated.addListener((item) => takeOver(item, () => {}).catch(() => {}));
 }
 
-// Moves a token left in sync storage by an older version out of it.
+// Each time the worker starts: keep content scripts out of local storage, and
+// move a token left in sync storage by an older version out of it.
+restrictLocalStorage();
 getToken();
 
 // The YouTube button only needs to know whether Flash is paired, not the token.
