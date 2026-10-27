@@ -5,7 +5,7 @@ use rdm_manager::Manager;
 use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Manager as _, PhysicalPosition, Rect};
+use tauri::{AppHandle, Emitter, Manager as _, PhysicalPosition};
 
 use crate::profile::{self, Profile};
 
@@ -30,30 +30,29 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     };
     let speed = Submenu::with_items(app, "Speed", true, &[&items.full, &items.background, &items.paused])?;
     let menu = Menu::with_items(app, &[
-        &item("show", "Show RDM")?,
+        &item("show", "Show Flash")?,
         &item("add", "Add URL…")?,
         &PredefinedMenuItem::separator(app)?,
         &speed,
         &item("resume_all", "Resume all")?,
         &item("pause_all", "Pause all")?,
         &PredefinedMenuItem::separator(app)?,
-        &item("quit", "Quit RDM")?,
+        &item("quit", "Quit Flash")?,
     ])?;
     app.manage(items);
 
     TrayIconBuilder::with_id(TRAY_ID)
         .icon(Image::from_bytes(include_bytes!("../icons/tray.png"))?)
         .icon_as_template(true)
-        .tooltip("RDM")
+        .tooltip("Flash")
         .menu(&menu)
         // Left click opens the panel; the menu is on right click.
         .show_menu_on_left_click(false)
         .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left, button_state: MouseButtonState::Up, position, rect, ..
-            } = event
+            if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, position, .. } =
+                event
             {
-                toggle_panel(tray.app_handle(), position, rect);
+                toggle_panel(tray.app_handle(), position);
             }
         })
         .on_menu_event(|app, event| {
@@ -104,9 +103,8 @@ static PANEL_SHOWN: Mutex<Option<Instant>> = Mutex::new(None);
 /// Shows the panel under the menu bar where it was clicked, or hides it if
 /// it's showing. Placed from the cursor and the screen's usable area rather
 /// than the icon's frame, which macOS doesn't always report correctly.
-fn toggle_panel(app: &AppHandle, cursor: PhysicalPosition<f64>, icon: Rect) {
+fn toggle_panel(app: &AppHandle, cursor: PhysicalPosition<f64>) {
     let Some(panel) = app.get_webview_window("panel") else { return };
-    eprintln!("rdm: tray click at {cursor:?}, icon {icon:?}");
     if panel.is_visible().unwrap_or(false) {
         let _ = panel.hide();
         return;

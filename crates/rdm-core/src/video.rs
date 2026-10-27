@@ -1,6 +1,6 @@
 //! Video-site downloads (YouTube, Vimeo, X, ...) by driving `yt-dlp`.
 //!
-//! RDM asks yt-dlp for the video's details first, then runs it with a
+//! Flash asks yt-dlp for the video's details first, then runs it with a
 //! machine-readable progress template and relays the numbers into
 //! [`Progress`]. Stopping kills yt-dlp; its `.part` files let the next run
 //! continue where it left off.
@@ -106,7 +106,7 @@ impl VideoJob {
             bail!("yt-dlp couldn't read this page: {}", last_lines(&out.stderr));
         }
         let meta: serde_json::Value =
-            serde_json::from_slice(&out.stdout).context("yt-dlp returned details RDM couldn't read")?;
+            serde_json::from_slice(&out.stdout).context("yt-dlp returned details Flash couldn't read")?;
         if meta.get("_type").and_then(|t| t.as_str()) == Some("playlist") {
             bail!("this is a playlist; add the individual videos instead");
         }

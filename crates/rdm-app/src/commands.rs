@@ -224,7 +224,7 @@ pub fn get_autostart() -> Res<bool> {
     Ok(launch_agent_path()?.exists())
 }
 
-/// Starts RDM hidden in the menu bar at login, via a LaunchAgent.
+/// Starts Flash hidden in the menu bar at login, via a LaunchAgent.
 #[tauri::command(rename_all = "snake_case")]
 pub fn set_autostart(enabled: bool) -> Res<()> {
     let path = launch_agent_path()?;

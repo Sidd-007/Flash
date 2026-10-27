@@ -11,7 +11,7 @@ use tauri::{AppHandle, Emitter, Manager as _};
 
 use crate::tray;
 
-/// Text RDM itself put on the clipboard (Copy URL), which must not echo back.
+/// Text Flash itself put on the clipboard (Copy URL), which must not echo back.
 static OWN_COPY: Mutex<Option<String>> = Mutex::new(None);
 
 pub fn note_own_copy(text: &str) {
@@ -36,7 +36,7 @@ pub fn start(app: AppHandle, manager: Manager) {
                 if !manager.settings().clipboard_watch {
                     return;
                 }
-                // Copying inside RDM itself shouldn't pop RDM's dialog.
+                // Copying inside Flash itself shouldn't pop Flash's dialog.
                 let rdm_focused = app.get_webview_window("main").and_then(|w| w.is_focused().ok()).unwrap_or(false);
                 if rdm_focused {
                     return;

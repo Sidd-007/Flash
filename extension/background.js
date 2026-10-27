@@ -31,7 +31,7 @@ function shouldCapture(item, s) {
 /**
  * Takes a browser download over. `release` lets the browser carry on (Chrome:
  * the filename callback, which also brings up its Save As dialog if enabled).
- * We only cancel once RDM has answered, so nothing is lost if it's not running.
+ * We only cancel once Flash has answered, so nothing is lost if it's not running.
  */
 async function takeOver(item, release) {
   const s = await getSettings();
@@ -39,7 +39,7 @@ async function takeOver(item, release) {
 
   let info;
   if (!shouldCapture(item, s)) {
-    // Not a file type RDM takes, unless RDM is waiting for a fresh link.
+    // Not a file type Flash takes, unless Flash is waiting for a fresh link.
     info = /^https?:/i.test(item.finalUrl || item.url) ? await pingRdm(500).catch(() => null) : null;
     if (!info?.awaiting_link) return release();
   }
@@ -60,7 +60,7 @@ async function takeOver(item, release) {
     size: item.totalBytes > 0 ? item.totalBytes : (item.fileSize > 0 ? item.fileSize : null),
     mime: item.mime || null,
   };
-  // RDM is waiting for a fresh link to an unfinished download: no questions.
+  // Flash is waiting for a fresh link to an unfinished download: no questions.
   if (s.askInBrowser && !info.awaiting_link) {
     await openDialog(request, info);
   } else {
@@ -68,8 +68,8 @@ async function takeOver(item, release) {
       await sendToRdm(request.url, { referrer: request.referrer, file_name: request.file_name });
     } catch (e) {
       if (info.awaiting_link) {
-        // RDM shows why the link didn't fit; the browser shouldn't start it.
-        notify('RDM couldn’t use this link', e.message);
+        // Flash shows why the link didn't fit; the browser shouldn't start it.
+        notify('Flash couldn’t use this link', e.message);
         return;
       }
       // Hand it back to the browser rather than losing it.
@@ -80,7 +80,7 @@ async function takeOver(item, release) {
 }
 
 /**
- * Shows RDM's download dialog as an overlay on the current page, like the
+ * Shows Flash's download dialog as an overlay on the current page, like the
  * browser's own Save As sheet. Pages extensions can't touch (chrome://, the
  * Web Store, PDFs) get a small window instead.
  */
@@ -145,7 +145,7 @@ function showOverlay(src, id, extensionOrigin) {
     iframe { display: block; width: 100%; height: 100%; border: 0; }
     @keyframes fade { from { opacity: 0; } }
     @keyframes pop { from { opacity: 0; transform: translateY(-10px) scale(0.98); } }
-  </style><div class="backdrop"><div class="card"><iframe title="Download with RDM"></iframe></div></div>`;
+  </style><div class="backdrop"><div class="card"><iframe title="Download with Flash"></iframe></div></div>`;
   const card = root.querySelector('.card');
   const frame = root.querySelector('iframe');
   let ready = false;
@@ -180,7 +180,7 @@ function showOverlay(src, id, extensionOrigin) {
 if (chrome.downloads.onDeterminingFilename) {
   // Chrome: fires once the response headers are in, so name and size are
   // known, and before the Save As dialog. Holding `suggest` keeps Chrome
-  // waiting while we check RDM; cancelling instead means no dialog at all.
+  // waiting while we check Flash; cancelling instead means no dialog at all.
   chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
     let released = false;
     const release = () => {
@@ -201,11 +201,11 @@ if (chrome.downloads.onDeterminingFilename) {
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.removeAll(() => {
-    chrome.contextMenus.create({ id: 'rdm-link', title: 'Download with RDM', contexts: ['link'] });
-    chrome.contextMenus.create({ id: 'rdm-media', title: 'Download media with RDM', contexts: ['video', 'audio', 'image'] });
+    chrome.contextMenus.create({ id: 'rdm-link', title: 'Download with Flash', contexts: ['link'] });
+    chrome.contextMenus.create({ id: 'rdm-media', title: 'Download media with Flash', contexts: ['video', 'audio', 'image'] });
     chrome.contextMenus.create({
       id: 'rdm-page-video',
-      title: 'Download video on this page with RDM',
+      title: 'Download video on this page with Flash',
       contexts: ['page', 'video'],
       documentUrlPatterns: VIDEO_SITES.flatMap((s) => [`*://${s}/*`, `*://*.${s}/*`]),
     });
@@ -219,7 +219,7 @@ async function offerPageVideo(url, title) {
     const rdm = await pingRdm();
     await openDialog({ url, referrer: null, file_name: title || null, size: null, mime: null, kind: 'video' }, rdm);
   } catch (e) {
-    notify('Could not send to RDM', e.message);
+    notify('Could not send to Flash', e.message);
   }
 }
 
@@ -234,7 +234,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   }
   const url = info.linkUrl || info.srcUrl;
   if (!url || !/^https?:/i.test(url)) {
-    notify('Can’t send this to RDM', 'Only http and https links can be downloaded.');
+    notify('Can’t send this to Flash', 'Only http and https links can be downloaded.');
     return;
   }
   try {
@@ -246,7 +246,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       await sendToRdm(url, { referrer: info.pageUrl || null });
     }
   } catch (e) {
-    notify('Could not send to RDM', e.message);
+    notify('Could not send to Flash', e.message);
   }
 });
 

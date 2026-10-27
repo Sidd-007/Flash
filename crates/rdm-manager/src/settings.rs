@@ -35,6 +35,7 @@ pub struct Settings {
     pub video_quality: String,
     /// Global limit of the "Background" speed profile, bytes/s.
     pub background_limit: u64,
+    pub theme: Theme,
 }
 
 impl Default for Settings {
@@ -56,6 +57,7 @@ impl Default for Settings {
             clipboard_watch: true,
             video_quality: "best".into(),
             background_limit: 1024 * 1024,
+            theme: Theme::default(),
         }
     }
 }
@@ -70,6 +72,8 @@ impl Settings {
     pub(crate) fn sanitized(mut self) -> Self {
         self.max_active = self.max_active.clamp(1, 20);
         self.connections = self.connections.clamp(1, 32);
+        self.theme.background = self.theme.background.filter(|c| is_hex_color(c));
+        self.theme.primary = self.theme.primary.filter(|c| is_hex_color(c));
         if self.background_limit == 0 {
             self.background_limit = Self::default().background_limit;
         }
@@ -81,6 +85,21 @@ impl Settings {
         }
         self
     }
+}
+
+/// Colours the UI is drawn in. `None` keeps the black and white default,
+/// which follows the system's light or dark mode.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct Theme {
+    /// `#rrggbb`. Text and lines are derived from it, light or dark.
+    pub background: Option<String>,
+    /// `#rrggbb`, for buttons, highlights, progress and charts.
+    pub primary: Option<String>,
+}
+
+fn is_hex_color(s: &str) -> bool {
+    s.len() == 7 && s.starts_with('#') && s[1..].chars().all(|c| c.is_ascii_hexdigit())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -182,6 +201,14 @@ mod tests {
         assert_eq!(s.category_for("movie.MKV").map(|c| c.name.as_str()), Some("Video"));
         assert_eq!(s.category_for("setup.dmg").map(|c| c.name.as_str()), Some("Programs"));
         assert!(s.category_for("README").is_none());
+    }
+
+    #[test]
+    fn theme_colors_must_be_hex() {
+        let theme = Theme { background: Some("#0B1020".into()), primary: Some("red".into()) };
+        let s = Settings { theme, ..Default::default() }.sanitized();
+        assert_eq!(s.theme.background.as_deref(), Some("#0B1020"));
+        assert_eq!(s.theme.primary, None);
     }
 
     #[test]

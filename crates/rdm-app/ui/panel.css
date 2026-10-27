@@ -38,7 +38,7 @@ body.panel-body { padding: 0; }
 .mb-top button { padding: 3px 5px; color: var(--muted); border-radius: 6px; }
 .mb-top button:hover { color: var(--text); background: var(--hover); border-color: var(--line); }
 .mb-bar { height: 2px; border-radius: 2px; background: var(--cell-left); margin: 7px 0 6px; overflow: hidden; }
-.mb-bar i { display: block; height: 100%; width: 0; background: var(--text); transition: width 0.45s ease; }
+.mb-bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width 0.45s ease; }
 .mb-row.paused .mb-bar i, .mb-row.queued .mb-bar i { background: var(--muted); }
 .mb-row.failed .mb-bar i { background: var(--danger); }
 .mb-row.completed .mb-bar { display: none; }

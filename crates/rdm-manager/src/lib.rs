@@ -24,7 +24,7 @@ pub use db::{Download, Group, Kind, Status};
 pub use stats::{Day, Stats};
 pub use rdm_core::SegmentView;
 pub use rdm_core::video::find_tool;
-pub use settings::{Category, Schedule, Settings};
+pub use settings::{Category, Schedule, Settings, Theme};
 
 use db::{Db, HistoryEntry, NewDownload};
 

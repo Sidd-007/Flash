@@ -10,13 +10,13 @@ const DEFAULTS = {
   // Ignore files smaller than this (when the size is known). 0 = no minimum.
   minSizeMB: 1,
   captureAll: false,
-  // Show RDM's download dialog in the browser before sending.
+  // Show Flash's download dialog in the browser before sending.
   askInBrowser: true,
   // Show a Download button on YouTube's player.
   videoButton: true,
 };
 
-/** Sites RDM downloads through yt-dlp (kept in sync with the app). */
+/** Sites Flash downloads through yt-dlp (kept in sync with the app). */
 const VIDEO_SITES = ['youtube.com', 'youtu.be', 'vimeo.com', 'x.com', 'twitter.com', 'tiktok.com', 'instagram.com',
   'facebook.com', 'fb.watch', 'reddit.com', 'twitch.tv', 'dailymotion.com', 'soundcloud.com', 'bilibili.com',
   'streamable.com', 'loom.com', 'bandcamp.com', 'ted.com', 'nicovideo.jp'];
@@ -28,7 +28,7 @@ function isVideoSite(url) {
   } catch { return false; }
 }
 
-/** RDM's pairing tokens are 24 random bytes in hex. */
+/** Flash's pairing tokens are 24 random bytes in hex. */
 const TOKEN_LENGTH = 48;
 
 async function getSettings() {
@@ -37,7 +37,7 @@ async function getSettings() {
 
 async function rdmFetch(path, options = {}) {
   const s = await getSettings();
-  if (!s.token) throw new Error('Not paired yet: paste the token from RDM → Settings → Browser into the extension options.');
+  if (!s.token) throw new Error('Not paired yet: paste the token from Flash → Settings → Browser into the extension options.');
   let res;
   try {
     res = await fetch(`http://127.0.0.1:${s.port}${path}`, {
@@ -45,16 +45,16 @@ async function rdmFetch(path, options = {}) {
       headers: { 'Content-Type': 'application/json', 'X-RDM-Token': s.token, ...(options.headers || {}) },
     });
   } catch (e) {
-    throw new Error(`Can't reach RDM on port ${s.port} (${e.message}). Is RDM running, and is the port the same as in RDM → Settings → Browser?`);
+    throw new Error(`Can't reach Flash on port ${s.port} (${e.message}). Is Flash running, and is the port the same as in Flash → Settings → Browser?`);
   }
   if (res.status === 401) {
-    throw new Error(`RDM rejected the pairing token${s.token.length === TOKEN_LENGTH ? '' : ` (it should be ${TOKEN_LENGTH} characters, this one is ${s.token.length})`}. Click Copy in RDM → Settings → Browser and paste it again.`);
+    throw new Error(`Flash rejected the pairing token${s.token.length === TOKEN_LENGTH ? '' : ` (it should be ${TOKEN_LENGTH} characters, this one is ${s.token.length})`}. Click Copy in Flash → Settings → Browser and paste it again.`);
   }
-  if (!res.ok) throw new Error(`RDM refused the request (${res.status}): ${await res.text()}`);
+  if (!res.ok) throw new Error(`Flash refused the request (${res.status}): ${await res.text()}`);
   return res.json();
 }
 
-/** Sends one download to RDM, with the browser's cookies for that URL. */
+/** Sends one download to Flash, with the browser's cookies for that URL. */
 async function sendToRdm(url, extra = {}) {
   let cookies = '';
   try {
@@ -66,10 +66,10 @@ async function sendToRdm(url, extra = {}) {
   });
 }
 
-/** Resolves with RDM's info, or rejects if it isn't reachable within `ms`. */
+/** Resolves with Flash's info, or rejects if it isn't reachable within `ms`. */
 function pingRdm(ms = 2000) {
   return Promise.race([
     rdmFetch('/v1/ping'),
-    new Promise((_, reject) => setTimeout(() => reject(new Error('RDM did not answer in time.')), ms)),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('Flash did not answer in time.')), ms)),
   ]);
 }

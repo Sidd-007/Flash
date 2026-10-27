@@ -1,5 +1,5 @@
 // Puts a "Download" button on YouTube's player, like IDM's. Clicking it opens
-// RDM's download dialog for the video (through yt-dlp). YouTube swaps pages
+// Flash's download dialog for the video (through yt-dlp). YouTube swaps pages
 // without reloading, so the button follows whichever player is showing.
 
 (() => {
@@ -78,8 +78,8 @@
     const style = document.createElement('style');
     style.textContent = CSS;
     button = el('div', 'pill hidden');
-    const get = el('button', 'get', { title: 'Download this video with RDM' });
-    get.append(icon(), el('span', '', {}, 'Download'), el('span', 'brand', {}, 'rdm'));
+    const get = el('button', 'get', { title: 'Download this video with Flash' });
+    get.append(icon(), el('span', '', {}, 'Download'), el('span', 'brand', {}, 'flash'));
     const close = el('button', 'close', { title: 'Hide for this video', 'aria-label': 'Hide' }, '✕');
     button.append(get, close);
     root.append(style, button);

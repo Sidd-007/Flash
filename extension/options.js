@@ -9,7 +9,7 @@ function checkToken() {
   const token = cleanToken($('#token').value);
   const hint = $('#token-hint');
   hint.hidden = !token || token.length === TOKEN_LENGTH;
-  hint.textContent = `The token should be ${TOKEN_LENGTH} characters; this one is ${token.length}. Click Copy in RDM → Settings → Browser and paste again.`;
+  hint.textContent = `The token should be ${TOKEN_LENGTH} characters; this one is ${token.length}. Click Copy in Flash → Settings → Browser and paste again.`;
 }
 
 function read() {
@@ -52,7 +52,7 @@ async function main() {
     $('#result').textContent = 'Testing…';
     try {
       const info = await pingRdm();
-      $('#result').textContent = `Connected to RDM ${info.version}.`;
+      $('#result').textContent = `Connected to Flash ${info.version}.`;
     } catch (e) {
       $('#result').textContent = e.message;
     }

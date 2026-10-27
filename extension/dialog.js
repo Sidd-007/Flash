@@ -41,7 +41,7 @@ function folderName(path) {
   return path.split('/').filter(Boolean).pop() || path;
 }
 
-/** Fills Where with: RDM's default, common folders, and recently used ones. */
+/** Fills Where with: Flash's default, common folders, and recently used ones. */
 async function fillFolders(selected) {
   const recent = (await chrome.storage.local.get(RECENT_KEY))[RECENT_KEY] || [];
   const home = request.home;
@@ -53,8 +53,8 @@ async function fillFolders(selected) {
     seen.add(value);
     options.push([value, label]);
   };
-  // The empty value means "RDM's default", so its categories still apply.
-  add('', request.download_dir ? `${folderName(request.download_dir)}  —  default` : 'RDM default');
+  // The empty value means "Flash's default", so its categories still apply.
+  add('', request.download_dir ? `${folderName(request.download_dir)}  —  default` : 'Flash default');
   for (const p of recent) add(p, `${folderName(p)}  —  ${tildify(p)}`);
   for (const p of common) if (p !== request.download_dir) add(p, `${folderName(p)}  —  ${tildify(p)}`);
   if (selected && !seen.has(selected)) add(selected, `${folderName(selected)}  —  ${tildify(selected)}`);
@@ -69,7 +69,7 @@ async function fillFolders(selected) {
   $('#dir').title = $('#dir').value || request.download_dir || '';
 }
 
-/** The folder picked last time ('' = RDM's default), preselected next time. */
+/** The folder picked last time ('' = Flash's default), preselected next time. */
 const LAST_KEY = 'lastDir';
 
 async function rememberFolder(path) {
@@ -91,7 +91,7 @@ function selectStem(input, hasExtension) {
 async function chooseFolder() {
   $('#choose').disabled = true;
   try {
-    // RDM shows the native macOS folder picker and returns the path.
+    // Flash shows the native macOS folder picker and returns the path.
     const { path } = await rdmFetch('/v1/choose-folder', {
       method: 'POST',
       body: JSON.stringify({ start: $('#dir').value || request.download_dir }),
@@ -115,7 +115,7 @@ function tellHeight() {
   tellPage('height', { height: Math.ceil(document.documentElement.getBoundingClientRect().height) });
 }
 
-/** Warns when RDM already has this file (by link, or by name and size). */
+/** Warns when Flash already has this file (by link, or by name and size). */
 async function checkDuplicates() {
   let found = [];
   try {
@@ -123,7 +123,7 @@ async function checkDuplicates() {
       method: 'POST',
       body: JSON.stringify({ url: request.url, file_name: $('#name').value.trim() || null, size: request.size || null }),
     }));
-  } catch { return; } // an older RDM without the check
+  } catch { return; } // an older Flash without the check
   const d = found[0];
   const note = $('#dupe');
   note.hidden = !d;
@@ -136,7 +136,7 @@ async function checkDuplicates() {
     const extra = document.createElement('span');
     extra.className = 'muted';
     extra.textContent = [d.total ? fmtBytes(d.total) : '', where && `in ${where}`].filter(Boolean).map((t) => `  ·  ${t}`).join('');
-    note.replaceChildren(done ? 'Already downloaded: ' : 'Already in RDM: ', b, extra);
+    note.replaceChildren(done ? 'Already downloaded: ' : 'Already in Flash: ', b, extra);
   }
   tellHeight();
 }
@@ -183,10 +183,10 @@ async function main() {
     for (const el of document.querySelectorAll('.video-only')) el.hidden = false;
     $('#quality').value = request.video_quality || 'best';
     $('#name').placeholder = 'the video title';
-    document.querySelector('.sheet-title').textContent = 'Download video with RDM';
+    document.querySelector('.sheet-title').textContent = 'Download video with Flash';
     // Plain links can fall back to Chrome; video pages can't.
     $('#browser').hidden = true;
-    if (!request.has_ytdlp) showError('RDM needs yt-dlp for video sites. In Terminal: brew install yt-dlp');
+    if (!request.has_ytdlp) showError('Flash needs yt-dlp for video sites. In Terminal: brew install yt-dlp');
   }
   let host = '';
   try { host = new URL(request.url).host; } catch { /* keep empty */ }

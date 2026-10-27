@@ -1,4 +1,4 @@
-//! RDM desktop app: a Tauri shell around `rdm-manager`.
+//! Flash desktop app: a Tauri shell around `rdm-manager`.
 
 mod bridge;
 mod clipboard;
@@ -30,6 +30,11 @@ fn main() {
             app.manage(capture.clone());
             app.manage(profile::PausedByProfile::default());
             bridge::start(app.handle().clone(), manager.clone(), bridge, capture);
+
+            // Keep "open at login" pointing at this copy of the app after a rename or move.
+            if commands::get_autostart().unwrap_or(false) {
+                let _ = commands::set_autostart(true);
+            }
 
             tray::create(app.handle())?;
             clipboard::start(app.handle().clone(), manager.clone());
@@ -82,7 +87,7 @@ fn main() {
             commands::show_main_window,
         ])
         .build(tauri::generate_context!())
-        .expect("failed to build RDM");
+        .expect("failed to build Flash");
 
     app.run(|app, event| {
         // Clicking the Dock icon brings the window back.

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "RDM Download Manager",
+  "name": "Flash Download Manager",
   "version": "0.1.0",
-  "description": "Send downloads and HLS video streams to RDM, the download manager on your Mac.",
+  "description": "Send downloads and HLS video streams to Flash, the download manager on your Mac.",
   "permissions": [
     "downloads",
     "contextMenus",
@@ -37,7 +37,7 @@
     }
   ],
   "action": {
-    "default_title": "RDM",
+    "default_title": "Flash",
     "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/16.png",

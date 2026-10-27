@@ -16,7 +16,7 @@ use tokio_util::sync::CancellationToken;
 /// URLs may be batch patterns like "https://x.com/img[001-050].jpg".
 /// HLS playlists (.m3u8) are downloaded as one video file.
 #[derive(Parser)]
-#[command(name = "rdm", version)]
+#[command(name = "flash", version)]
 struct Args {
     /// URL to download
     url: String,

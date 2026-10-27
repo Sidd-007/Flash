@@ -171,13 +171,13 @@ struct Incoming {
     cookies: Option<String>,
     user_agent: Option<String>,
     kind: Option<Kind>,
-    /// Folder chosen in the extension's dialog; `None` = RDM's default.
+    /// Folder chosen in the extension's dialog; `None` = Flash's default.
     dir: Option<String>,
     /// `false` adds it paused.
     start: Option<bool>,
     /// Video downloads: "best", "1080", "audio", ...
     quality: Option<String>,
-    /// The user already confirmed in the browser, so skip RDM's dialog.
+    /// The user already confirmed in the browser, so skip Flash's dialog.
     #[serde(default)]
     confirmed: bool,
 }

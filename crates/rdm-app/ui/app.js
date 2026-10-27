@@ -20,7 +20,7 @@ const state = {
   pending: null,             // headers/kind from a browser hand-off
   segments: new Map(),       // id -> missing ranges, for the map
   speeds: [],                // recent total speeds, for the sparkline
-  view: 'list',              // 'list' or 'stats'
+  view: 'list',              // 'list', 'stats' or 'theme'
   typesOpen: loadPref('typesOpen', false),
 };
 
@@ -276,6 +276,8 @@ function render() {
   $('#empty').classList.toggle('hidden', visible.length > 0);
   $('main').classList.toggle('show-stats', state.view === 'stats');
   $('#stats').classList.toggle('hidden', state.view !== 'stats');
+  $('main').classList.toggle('show-theme', state.view === 'theme');
+  $('#theme').classList.toggle('hidden', state.view !== 'theme');
   const filterLabel = state.category || STATUS_FILTERS.find(([k]) => k === state.filter)?.[1] || 'All';
   $('#list-title').textContent = filterLabel;
   $('#list-count').textContent = visible.length ? String(visible.length).padStart(2, '0') : '';
@@ -308,8 +310,11 @@ function renderSidebar(all) {
   const stats = navItem('6', 'Stats', 0, state.view === 'stats');
   stats.onclick = openStats;
   $('#nav-insights').replaceChildren(stats);
+  const theme = navItem('7', 'Theme', 0, state.view === 'theme');
+  theme.onclick = openTheme;
+  $('#nav-appearance').replaceChildren(theme);
   // Library items only look selected while the list is showing.
-  if (state.view === 'stats') for (const li of $$('#nav-status li')) li.classList.remove('active');
+  if (state.view !== 'list') for (const li of $$('#nav-status li')) li.classList.remove('active');
 }
 
 function selectFilter(key) {
@@ -373,7 +378,7 @@ function drawSpark() {
     const y = h - 2 - (v / max) * (h - 6);
     i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
   });
-  ctx.strokeStyle = css.getPropertyValue('--text');
+  ctx.strokeStyle = css.getPropertyValue('--accent');
   ctx.lineWidth = 1.25;
   ctx.stroke();
   ctx.lineTo(w, h);
@@ -418,6 +423,7 @@ function paletteCommands() {
     ['OK', 'Show finished', '4', () => selectFilter('completed')],
     ['ERR', 'Show failed', '5', () => selectFilter('failed')],
     ['STA', 'Open stats', '6', () => openStats()],
+    ['THM', 'Theme', '7', () => openTheme()],
     ['CLR', 'Clear finished from the list', '', () => invoke('clear_completed')],
     ['SET', 'Settings', '⌘,', () => openSettings()],
     ['MAX', 'Speed: full', state.profile === 'full' ? '●' : '', () => invoke('set_profile', { profile: 'full' })],
@@ -714,7 +720,7 @@ function bindTooltips() {
 function renderDetail() {
   const sel = selectedItems();
   const panel = $('#detail');
-  if (state.view === 'stats') { panel.classList.add('hidden'); return; }
+  if (state.view !== 'list') { panel.classList.add('hidden'); return; }
   if (sel.length !== 1) { panel.classList.add('hidden'); return; }
   const d = sel[0];
   panel.classList.remove('hidden');
@@ -1037,7 +1043,7 @@ function folderName(path) {
   return path.split('/').filter(Boolean).pop() || path;
 }
 
-/** Fills Save to with RDM's default, recent folders and common ones; '' is the default. */
+/** Fills Save to with Flash's default, recent folders and common ones; '' is the default. */
 async function fillAddFolders(selected) {
   const h = await home();
   const def = state.settings?.download_dir || '';
@@ -1080,6 +1086,92 @@ async function chooseFolder(input) {
     const dir = await invoke('choose_folder', { start: input.value.trim() || input.placeholder || null });
     if (dir) input.value = dir;
   } catch (e) { toast(String(e)); }
+}
+
+// ---------- theme ----------
+
+function openTheme() {
+  state.view = 'theme';
+  state.selected.clear();
+  render();
+  renderTheme();
+}
+
+const currentTheme = () => ({ background: null, primary: null, ...(state.settings?.theme || {}) });
+
+function renderTheme() {
+  const t = currentTheme();
+  const same = (p) => (p.background || null) === (t.background || null) && (p.primary || null) === (t.primary || null);
+  $('#t-presets').replaceChildren(...THEME_PRESETS.map((p) => {
+    const b = el('button', `preset${same(p) ? ' active' : ''}`);
+    b.type = 'button';
+    const chip = el('div', `chip${p.background ? '' : ' split'}`);
+    if (p.background) {
+      chip.style.background = p.background;
+      const line = el('b');
+      line.style.background = inkOn(p.background);
+      chip.append(line);
+    }
+    const accent = el('i');
+    accent.style.background = p.primary || 'linear-gradient(90deg, #0a0a0a 50%, #fafafa 50%)';
+    chip.append(accent);
+    b.append(chip, el('span', '', p.name));
+    b.onclick = () => setTheme({ background: p.background, primary: p.primary });
+    return b;
+  }));
+  // Without a colour of its own, a swatch shows what's on screen now.
+  const css = getComputedStyle(document.documentElement);
+  const shown = (v) => { const c = css.getPropertyValue(v).trim(); return isHex(c) ? c : null; };
+  for (const [key, cssVar] of [['bg', '--bg'], ['primary', '--solid']]) {
+    const value = key === 'bg' ? t.background : t.primary;
+    const display = value || shown(cssVar) || '#000000';
+    $(`#t-${key}`).value = display.toLowerCase();
+    $(`#t-${key}-chip`).style.background = display;
+    if (document.activeElement !== $(`#t-${key}-hex`)) $(`#t-${key}-hex`).value = value || '';
+    $(`#t-${key}-clear`).disabled = !value;
+  }
+  const bg = t.background;
+  $('#t-mode').textContent = bg ? (isDark(bg) ? 'dark' : 'light') : 'follows macOS';
+  const cols = [32, 58, 41, 76, 64, 90, 52, 70, 84, 100, 61, 45];
+  if (!$('.t-cols').children.length) {
+    $('.t-cols').replaceChildren(...cols.map((h) => {
+      const c = el('div', 'c');
+      const i = el('i');
+      i.style.height = `${h}%`;
+      c.append(i);
+      return c;
+    }));
+  }
+}
+
+let themeSave = 0;
+
+/** Applies at once; saves shortly after, so dragging a colour picker stays smooth. */
+function setTheme(patch) {
+  const theme = { ...currentTheme(), ...patch };
+  state.settings = { ...state.settings, theme };
+  applyTheme(theme);
+  renderTheme();
+  clearTimeout(themeSave);
+  themeSave = setTimeout(async () => {
+    try {
+      state.settings = await invoke('save_settings', { settings: state.settings });
+    } catch (e) { toast(String(e)); }
+  }, 250);
+}
+
+function bindTheme() {
+  for (const [key, field] of [['bg', 'background'], ['primary', 'primary']]) {
+    $(`#t-${key}`).oninput = (e) => setTheme({ [field]: e.target.value });
+    $(`#t-${key}-hex`).oninput = (e) => {
+      const v = e.target.value.trim().toLowerCase();
+      const hex = v.startsWith('#') ? v : `#${v}`;
+      if (isHex(hex)) setTheme({ [field]: hex });
+    };
+    $(`#t-${key}-hex`).onblur = () => renderTheme();
+    $(`#t-${key}-clear`).onclick = () => setTheme({ [field]: null });
+  }
+  $('#t-reset').onclick = () => setTheme({ background: null, primary: null });
 }
 
 // ---------- refresh link ----------
@@ -1273,7 +1365,7 @@ async function submitSettings(e) {
     state.settings = await invoke('save_settings', { settings });
     await invoke('set_autostart', { enabled: $('#s-login').checked });
     $('#dlg-settings').close();
-    if (settings.bridge_port !== oldPort) toast('Restart RDM to use the new browser port.');
+    if (settings.bridge_port !== oldPort) toast('Restart Flash to use the new browser port.');
     await reload();
   } catch (x) {
     showErr(err, String(x));
@@ -1355,6 +1447,7 @@ function bind() {
   $('#a-dir').onchange = () => { $('#a-dir').title = $('#a-dir').value || state.settings?.download_dir || ''; };
   $('#a-name').oninput = checkDuplicates;
   $('#form-relink').onsubmit = submitRelink;
+  bindTheme();
   $('#l-cancel').onclick = () => $('#dlg-relink').close();
   $('#dlg-relink').addEventListener('close', () => { invoke('await_link', { id: null }); relinkId = null; });
   $('#d-relink').onclick = () => { const [d] = selectedItems(); if (d) openRelink(d); };
@@ -1417,6 +1510,7 @@ function bind() {
     else if (e.key === '/') { e.preventDefault(); $('#search').focus(); }
     else if (/^[1-5]$/.test(e.key) && !e.metaKey) selectFilter(STATUS_FILTERS[Number(e.key) - 1][0]);
     else if (e.key === '6' && !e.metaKey) openStats();
+    else if (e.key === '7' && !e.metaKey) openTheme();
     else if (e.key === 'Backspace' || e.key === 'Delete') openRemove();
     else if (e.key === ' ') {
       e.preventDefault();
@@ -1430,11 +1524,17 @@ function bind() {
 async function main() {
   bind();
   state.settings = await invoke('get_settings');
+  applyTheme(state.settings.theme);
   await reload();
   await listen('rdm-event', (e) => onEvent(e.payload));
   await listen('rdm-incoming', (e) => openAdd(e.payload));
   await listen('rdm-show-add', () => openAdd());
-  await listen('rdm-settings-changed', async () => { state.settings = await invoke('get_settings'); render(); });
+  await listen('rdm-settings-changed', async () => {
+    state.settings = await invoke('get_settings');
+    applyTheme(state.settings.theme);
+    if (state.view === 'theme') renderTheme();
+    render();
+  });
   await listen('rdm-relinked', (e) => onRelinked(e.payload));
   await listen('rdm-profile', (e) => { state.profile = e.payload; });
   state.profile = await invoke('get_profile');

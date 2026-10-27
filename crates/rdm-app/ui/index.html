@@ -3,23 +3,27 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>RDM</title>
+  <title>Flash</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header class="titlebar" data-tauri-drag-region>
     <div class="traffic" data-tauri-drag-region></div>
-    <div class="brand mono" data-tauri-drag-region>rdm<span class="caret">_</span></div>
+    <div class="brand mono" data-tauri-drag-region>flash<span class="caret">_</span></div>
     <label class="search">
       <svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg>
       <input id="search" type="search" placeholder="Search" spellcheck="false" autocomplete="off">
       <kbd>/</kbd>
     </label>
     <div class="spacer" data-tauri-drag-region></div>
-    <button id="btn-palette" class="ghost mono" title="Command palette (⌘K)">Commands <kbd>⌘K</kbd></button>
-    <button id="btn-settings" class="ghost mono" title="Settings (⌘,)">Settings <kbd>⌘,</kbd></button>
-    <button id="btn-add" class="solid" title="Add download (⌘N)">
-      <svg viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg> Add URL <kbd>⌘N</kbd>
+    <button id="btn-palette" class="ghost icon" title="Commands  ⌘K" aria-label="Commands">
+      <svg viewBox="0 0 16 16"><path d="M5.5 2.5a2 2 0 1 0 0 4h5a2 2 0 1 0 0-4 2 2 0 0 0-2 2v7a2 2 0 1 0 2-2h-5a2 2 0 1 0 2 2v-7a2 2 0 0 0-2-2z"/></svg>
+    </button>
+    <button id="btn-settings" class="ghost icon" title="Settings  ⌘," aria-label="Settings">
+      <svg viewBox="0 0 16 16"><path d="M2.5 4.5h6M11.5 4.5h2M2.5 11.5h2M7.5 11.5h6"/><circle cx="10" cy="4.5" r="1.5"/><circle cx="6" cy="11.5" r="1.5"/></svg>
+    </button>
+    <button id="btn-add" class="solid slim" title="Add download  ⌘N">
+      <svg viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9"/></svg> Add
     </button>
   </header>
 
@@ -36,6 +40,8 @@
       </div>
       <div class="label">Insights</div>
       <ul id="nav-insights"></ul>
+      <div class="label">Appearance</div>
+      <ul id="nav-appearance"></ul>
 
       <div class="meter">
         <div class="label">Throughput</div>
@@ -46,6 +52,52 @@
 
     <main>
       <section id="stats" class="stats hidden" aria-label="Download statistics"></section>
+      <section id="theme" class="stats theme hidden" aria-label="Theme">
+        <div class="stats-head">
+          <h1>Theme</h1>
+          <button type="button" class="ghost mono" id="t-reset">Reset to system</button>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h2>Presets</h2><span class="aside">applies instantly</span></div>
+          <div class="presets" id="t-presets"></div>
+        </div>
+        <div class="panels">
+          <div class="panel">
+            <div class="panel-head"><h2>Custom</h2><span class="aside" id="t-mode"></span></div>
+            <div class="swatch-field">
+              <span class="k">Background</span>
+              <label class="swatch" title="Pick a colour"><input type="color" id="t-bg"><i id="t-bg-chip"></i></label>
+              <input type="text" id="t-bg-hex" class="mono" maxlength="7" spellcheck="false" placeholder="system">
+              <button type="button" class="ghost mono" id="t-bg-clear">System</button>
+            </div>
+            <div class="swatch-field">
+              <span class="k">Primary</span>
+              <label class="swatch" title="Pick a colour"><input type="color" id="t-primary"><i id="t-primary-chip"></i></label>
+              <input type="text" id="t-primary-hex" class="mono" maxlength="7" spellcheck="false" placeholder="default">
+              <button type="button" class="ghost mono" id="t-primary-clear">Default</button>
+            </div>
+            <p class="hint t-hint">Text, lines and panels follow the background on their own, so any colour stays readable. Primary colours buttons, highlights, progress and charts.</p>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h2>Preview</h2></div>
+            <div class="t-preview">
+              <div class="t-row">
+                <div class="glyph">MP4</div>
+                <div class="t-main"><div class="name">ubuntu-26.04-desktop.iso</div><div class="meta">2.4 GB / 6.2 GB · 18.4 MB/s</div></div>
+                <div class="pct">38%</div>
+                <div class="bar"><i style="width: 38%"></i></div>
+              </div>
+              <div class="t-controls">
+                <div class="tabs"><button type="button" class="active">Full</button><button type="button">Background</button></div>
+                <span class="spacer"></span>
+                <button type="button" class="ghost">Cancel</button>
+                <button type="button" class="solid">Download</button>
+              </div>
+              <div class="cols short t-cols"></div>
+            </div>
+          </div>
+        </div>
+      </section>
       <div class="listbar">
         <div class="list-title"><span id="list-title">All</span><span class="mono count" id="list-count"></span></div>
         <div class="list-actions mono">
@@ -196,7 +248,7 @@
         <span>New link to the same file</span>
         <input id="l-url" type="text" placeholder="https://" spellcheck="false">
       </label>
-      <div class="note waiting" id="l-wait"><span class="pulse"></span><span>Or start the download again in your browser. RDM will catch the new link and carry on from <b id="l-done"></b>.</span></div>
+      <div class="note waiting" id="l-wait"><span class="pulse"></span><span>Or start the download again in your browser. Flash will catch the new link and carry on from <b id="l-done"></b>.</span></div>
       <div class="error hidden" id="l-error"></div>
       <div class="buttons">
         <span class="spacer"></span>
@@ -289,7 +341,7 @@
       </div>
 
       <div class="tab hidden" data-tab="browser">
-        <label class="check"><input type="checkbox" id="s-confirm"> Ask in RDM before starting browser downloads the extension didn't already confirm</label>
+        <label class="check"><input type="checkbox" id="s-confirm"> Ask in Flash before starting browser downloads the extension didn't already confirm</label>
         <div class="grid">
           <label class="field"><span>Port</span><input id="s-port" type="number" min="1024" max="65535"></label>
           <span></span>
@@ -305,7 +357,7 @@
         <p class="muted mono" id="s-bridge-status"></p>
         <ol class="steps muted">
           <li>Chrome → <code>chrome://extensions</code> → turn on <b>Developer mode</b>.</li>
-          <li><b>Load unpacked</b> → choose the <code>extension</code> folder in the RDM project.</li>
+          <li><b>Load unpacked</b> → choose the <code>extension</code> folder in the project.</li>
           <li>In the extension's options, paste the token and click <b>Test connection</b>.</li>
         </ol>
       </div>
@@ -319,6 +371,7 @@
     </form>
   </dialog>
 
+  <script src="theme.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

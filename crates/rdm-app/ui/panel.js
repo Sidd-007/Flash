@@ -132,6 +132,7 @@ async function reload() {
   for (const d of list) items.set(d.id, d);
   profile = p;
   settings = s;
+  applyTheme(s.theme);
   render();
 }
 
@@ -171,7 +172,11 @@ async function main() {
   window.addEventListener('focus', reload);
   await listen('rdm-event', (e) => onEvent(e.payload));
   await listen('rdm-profile', (e) => { profile = e.payload; render(); });
-  await listen('rdm-settings-changed', async () => { settings = await invoke('get_settings'); render(); });
+  await listen('rdm-settings-changed', async () => {
+    settings = await invoke('get_settings');
+    applyTheme(settings.theme);
+    render();
+  });
   await reload();
 }
 
