@@ -1,20 +1,13 @@
-# Flash: a Rust Download Manager for macOS
+# Flash
 
-An IDM-style download manager. It downloads each file over several parallel connections, resumes after interruptions, keeps a queue with a scheduler and speed limits, has a menu bar app, and comes with a browser extension that sends downloads to it.
+A fast download manager for macOS, written in Rust.
 
-## What's in here
+- Splits each file across parallel connections, and resumes after a pause, crash or network drop
+- Queue, scheduler, speed limits and a menu bar panel
+- Browser extension that sends downloads to Flash, including YouTube videos
+- Videos from YouTube and similar sites through `yt-dlp`, and HLS streams (`.m3u8`)
 
-| Path | What it is |
-|------|------------|
-| `crates/rdm-core` | Download engine: segmented, resumable HTTP downloads, HLS video, speed limits, checksums, batch patterns |
-| `crates/rdm-cli` | `flash` command-line tool |
-| `crates/rdm-manager` | Download queue: SQLite storage, simultaneous-download limit, scheduler, categories, live events |
-| `crates/rdm-app` | macOS app (Tauri v2): window, menu bar icon, notifications, browser bridge |
-| `extension` | Browser extension for Chrome (MV3) and Firefox |
-
-## The app
-
-Build the `.app` and `.dmg`:
+## Install
 
 ```bash
 pnpm install
@@ -24,92 +17,44 @@ pnpm install
 pnpm build
 ```
 
-The output is in `target/release/bundle/macos/Flash.app` (and `bundle/dmg/`). Drag `Flash.app` into `/Applications`.
-
-The app isn't signed with an Apple Developer ID. The first time you open it, right-click it and choose **Open**, or run:
+Move `target/release/bundle/macos/Flash.app` to `/Applications`. The app isn't signed, so clear the quarantine flag once:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/Flash.app
 ```
 
-To run it in development mode with live reload of the UI:
+For video sites, install `yt-dlp` and `ffmpeg`:
+
+```bash
+brew install yt-dlp ffmpeg
+```
+
+## Browser extension
+
+1. In Flash, open **Settings → Browser** and copy the pairing token.
+2. In Chrome, open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked** and pick the `extension` folder.
+3. Paste the token in the extension's options.
+
+The extension only talks to Flash on `127.0.0.1`, and only with the token.
+
+## CLI
+
+```bash
+cargo install --path crates/rdm-cli
+```
+
+```bash
+flash "https://example.com/file.iso" -c 16 -d ~/Downloads
+```
+
+Press Ctrl-C to pause. Run the same command again to resume.
+
+## Development
 
 ```bash
 pnpm dev
 ```
 
-Closing the window keeps Flash running in the menu bar, where it shows the total download speed. Click the menu bar icon for a small panel with live progress, pause and resume buttons, and the speed profiles. Right-click it for the menu, including **Quit Flash**.
-
-- **Speed profiles:** **Full speed**, **Background** (all downloads capped at the speed set in Settings, 1 MB/s by default) and **Paused**. Switch from the panel, the menu bar's Speed submenu or the ⌘K palette. Leaving **Paused** resumes only the downloads it paused.
-- **Refresh link:** when a signed link from a file host expires partway through, right-click the paused or failed download and choose **Refresh link…**. Paste a new link, or start the download again in your browser and Flash catches it. The new link must serve a file of the same size; Flash carries on from the bytes it already has.
-- **Duplicate check:** the add dialog and the browser overlay warn when you already have the file, matched by link or by name and size. The button changes to **Download again**.
-- The add dialog and the browser overlay remember the last folder you saved to.
-
-### Keyboard shortcuts
-
-| Keys | Action |
-|------|--------|
-| ⌘N | Add URL (pre-filled from the clipboard) |
-| Space | Pause or resume the selected downloads |
-| ⌫ | Remove the selected downloads |
-| ⌘A | Select all |
-| ⌘, | Settings |
-
-## The browser extension
-
-1. Open Flash, go to **Settings → Browser** and click **Copy** next to the pairing token.
-2. Chrome: open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked** and choose the `extension` folder.
-3. The extension's options open on their own. Paste the token and click **Test connection**.
-
-What it does:
-- Takes over downloads of the listed file types (default: archives, disk images, installers, video, audio, PDFs; minimum 1 MB) and passes along the browser's cookies, so downloads that need a login work. If Flash isn't running, the browser downloads the file as usual.
-- Adds **Download with Flash** to the right-click menu for links and media.
-- Detects HLS video streams (`.m3u8`) on the current tab. Click the toolbar icon, then **Download**.
-- On YouTube (watch pages, Shorts, live and embedded players) a **Download** button appears on the player when you hover or pause. It opens Flash's dialog with a quality picker; Flash downloads the video through yt-dlp. Turn it off in the extension options.
-
-**Firefox:** copy `manifest.firefox.json` over `manifest.json` in a copy of the folder, then load it from `about:debugging` → **This Firefox** → **Load Temporary Add-on**.
-
-**Safari** needs an Xcode project (`xcrun safari-web-extension-converter extension`). That requires full Xcode, not just the Command Line Tools.
-
-Security: the bridge only listens on `127.0.0.1`. It requires the pairing token, refuses requests whose `Origin` is a web page, and checks the `Host` header to block DNS-rebinding attacks.
-
-## The CLI
-
-```bash
-cargo install --path crates/rdm-cli --force
-```
-
-```bash
-flash "https://example.com/big.iso" -d ~/Downloads -c 16
-```
-
-```bash
-flash "https://example.com/photos/img[001-120].jpg" --limit 2M
-```
-
-```bash
-flash "https://cdn.example.com/video/master.m3u8" -o "My video"
-```
-
-```bash
-flash "https://example.com/tool.dmg" --checksum sha256:3a7bd3e2360a3d...
-```
-
-Press Ctrl-C to pause. Running the same command again resumes the download.
-
-## How it works
-
-- **Segments:** a 1-byte ranged GET finds the size, whether ranges work, and the filename. The file is split across N HTTP/1.1 connections. Each connection writes straight to its offset in a preallocated `.part` file. When a connection finishes, it takes over half of the biggest remaining segment.
-- **Crash safety:** a single writer thread `pwrite`s the data. Every 2 s the `.part` file is fsynced and then the remaining byte ranges are written atomically to `.rdm.json`.
-- **HLS:** downloads the master playlist and picks the highest-bandwidth variant. Segments download in parallel and are decrypted if they use AES-128. Finished segments are kept until the end, so the download resumes, and are then joined into one file. If `ffmpeg` is installed, `.ts` output is remuxed to `.mp4`. Live streams and DRM (SAMPLE-AES) aren't supported.
-- **Queue:** SQLite in `~/Library/Application Support/com.siddhant.rdm/`. Downloads still running when the app quits go back in the queue.
-
-## Development
-
 ```bash
 cargo test --workspace
-```
-
-```bash
-cargo clippy --workspace --all-targets
 ```
