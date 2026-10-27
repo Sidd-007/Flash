@@ -16,7 +16,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use cbc::cipher::{BlockDecryptMut, KeyIvInit, block_padding::Pkcs7};
 use futures_util::StreamExt;
 use reqwest::Client;
-use reqwest::header::HeaderMap;
+use reqwest::header::{AUTHORIZATION, COOKIE, HeaderMap, PROXY_AUTHORIZATION};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use url::Url;
@@ -69,6 +69,8 @@ pub struct HlsJob {
     client: Client,
     /// The URL as requested, recorded so a rerun can find its parts folder.
     source: String,
+    /// Credentials in `headers` only go back to this URL's origin.
+    origin: Url,
     headers: HeaderMap,
     limiters: Vec<Arc<RateLimiter>>,
     segments: Vec<Segment>,
@@ -82,13 +84,14 @@ pub struct HlsJob {
 
 impl HlsJob {
     pub async fn prepare(client: Client, req: HlsRequest) -> Result<Self> {
-        let mut url = Url::parse(&req.url).with_context(|| format!("invalid URL: {}", req.url))?;
-        let mut playlist = fetch_playlist(&client, &url, &req.headers).await?;
+        let origin = Url::parse(&req.url).with_context(|| format!("invalid URL: {}", req.url))?;
+        let mut url = origin.clone();
+        let mut playlist = fetch_playlist(&client, &url, &headers_for(&origin, &url, &req.headers)).await?;
         if let Playlist::Master(variants) = &playlist {
             // Best quality = highest bandwidth.
             let (_, best) = variants.iter().max_by_key(|(bw, _)| *bw).context("empty master playlist")?;
             url = best.clone();
-            playlist = fetch_playlist(&client, &url, &req.headers).await?;
+            playlist = fetch_playlist(&client, &url, &headers_for(&origin, &url, &req.headers)).await?;
         }
         let Playlist::Media { segments, init } = playlist else {
             bail!("master playlist points to another master playlist");
@@ -145,6 +148,7 @@ impl HlsJob {
             },
             client,
             source: req.url,
+            origin,
             headers: req.headers,
             limiters: req.limiters,
             segments,
@@ -260,7 +264,8 @@ impl HlsJob {
         loop {
             let mut counted = 0;
             let attempt = async {
-                let resp = self.client.get(url.clone()).headers(self.headers.clone()).send().await?;
+                let headers = headers_for(&self.origin, url, &self.headers);
+                let resp = self.client.get(url.clone()).headers(headers).send().await?;
                 let mut body = resp.error_for_status()?.bytes_stream();
                 let mut data = Vec::new();
                 while let Some(chunk) = body.next().await {
@@ -364,6 +369,19 @@ fn remux(input: &Path, output: &Path) -> Result<()> {
         bail!("ffmpeg exited with {status}");
     }
     Ok(())
+}
+
+/// The headers to send to `target`. A playlist can point anywhere, so the
+/// user's credentials only go to the origin (scheme, host and port) of the URL
+/// they gave us; other hosts, and plain HTTP, get the rest of the headers.
+fn headers_for(origin: &Url, target: &Url, headers: &HeaderMap) -> HeaderMap {
+    let mut headers = headers.clone();
+    if target.origin() != origin.origin() {
+        for name in [COOKIE, AUTHORIZATION, PROXY_AUTHORIZATION] {
+            headers.remove(name);
+        }
+    }
+    headers
 }
 
 async fn fetch_playlist(client: &Client, url: &Url, headers: &HeaderMap) -> Result<Playlist> {

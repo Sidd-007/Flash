@@ -14,7 +14,6 @@ function checkToken() {
 
 function read() {
   return {
-    token: cleanToken($('#token').value),
     port: Number($('#port').value) || DEFAULTS.port,
     enabled: $('#enabled').checked,
     captureAll: $('#captureAll').checked,
@@ -27,13 +26,14 @@ function read() {
 
 async function save() {
   await chrome.storage.sync.set(read());
+  await setToken(cleanToken($('#token').value));
   $('#saved').textContent = 'Saved.';
   setTimeout(() => { $('#saved').textContent = ''; }, 1500);
 }
 
 async function main() {
   const s = await getSettings();
-  $('#token').value = s.token;
+  $('#token').value = await getToken();
   $('#port').value = s.port;
   $('#enabled').checked = s.enabled;
   $('#captureAll').checked = s.captureAll;
@@ -47,7 +47,7 @@ async function main() {
   $('#save').onclick = save;
   $('#test').onclick = async () => {
     await save();
-    $('#token').value = read().token;
+    $('#token').value = cleanToken($('#token').value);
     checkToken();
     $('#result').textContent = 'Testing…';
     try {

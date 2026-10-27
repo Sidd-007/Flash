@@ -1,28 +1,36 @@
 //! HLS end to end: master playlist -> variant -> AES-128 segments -> one file.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use aes::Aes128;
 use cbc::cipher::{BlockEncryptMut, KeyIvInit, block_padding::Pkcs7};
 use rdm_core::{HlsJob, HlsRequest, Outcome};
-use reqwest::header::HeaderMap;
+use reqwest::header::{HeaderMap, HeaderValue};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 
 async fn serve(files: HashMap<String, Vec<u8>>) -> String {
+    serve_logged(files, Arc::default()).await.0
+}
+
+/// Like `serve`, recording each request's head (lowercased) in `log`.
+async fn serve_logged(files: HashMap<String, Vec<u8>>, log: Arc<Mutex<Vec<String>>>) -> (String, Arc<Mutex<Vec<String>>>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     let files = Arc::new(files);
+    let requests = log.clone();
     tokio::spawn(async move {
         loop {
             let (mut sock, _) = listener.accept().await.unwrap();
             let files = files.clone();
+            let requests = requests.clone();
             tokio::spawn(async move {
                 let mut buf = vec![0u8; 4096];
                 let n = sock.read(&mut buf).await.unwrap_or(0);
                 let head = String::from_utf8_lossy(&buf[..n]);
+                requests.lock().unwrap().push(head.to_ascii_lowercase());
                 let path = head.split_whitespace().nth(1).unwrap_or("/").to_owned();
                 let (status, body) = match files.get(&path) {
                     Some(b) => ("200 OK", b.clone()),
@@ -34,7 +42,7 @@ async fn serve(files: HashMap<String, Vec<u8>>) -> String {
             });
         }
     });
-    base
+    (base, log)
 }
 
 #[tokio::test]
@@ -87,4 +95,48 @@ async fn downloads_master_playlist_with_encrypted_segments() {
 
 fn job_name(path: &std::path::Path) -> String {
     path.file_name().unwrap().to_string_lossy().into_owned()
+}
+
+#[tokio::test]
+async fn credentials_stay_with_the_original_host() {
+    // The variant and its segments live on another host (localhost vs 127.0.0.1).
+    let mut other = HashMap::new();
+    other.insert("/index.m3u8".into(), b"#EXTM3U\n#EXTINF:1,\nseg0.ts\n#EXTINF:1,\nseg1.ts\n#EXT-X-ENDLIST\n".to_vec());
+    other.insert("/seg0.ts".into(), vec![1u8; 1000]);
+    other.insert("/seg1.ts".into(), vec![2u8; 1000]);
+    let (other_base, other_log) = serve_logged(other, Arc::default()).await;
+    let other_base = other_base.replace("127.0.0.1", "localhost");
+
+    let mut own = HashMap::new();
+    own.insert(
+        "/master.m3u8".into(),
+        format!("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=900000\n{other_base}/index.m3u8\n").into_bytes(),
+    );
+    let (base, own_log) = serve_logged(own, Arc::default()).await;
+
+    let mut headers = HeaderMap::new();
+    headers.insert("cookie", HeaderValue::from_static("sid=fake-secret"));
+    headers.insert("authorization", HeaderValue::from_static("Bearer fake-secret"));
+    headers.insert("referer", HeaderValue::from_static("https://example.com/watch"));
+    let dir = tempfile::tempdir().unwrap();
+    let job = HlsJob::prepare(rdm_core::default_client().unwrap(), HlsRequest {
+        url: format!("{base}/master.m3u8"),
+        dir: dir.path().into(),
+        file_name: Some("clip".into()),
+        connections: 2,
+        headers,
+        limiters: Vec::new(),
+    })
+    .await
+    .unwrap();
+    assert!(matches!(job.run(CancellationToken::new()).await.unwrap(), Outcome::Completed(_)));
+
+    let own = own_log.lock().unwrap().join("\n");
+    assert!(own.contains("cookie: sid=fake-secret") && own.contains("authorization: bearer fake-secret"), "{own}");
+    let other = other_log.lock().unwrap().clone();
+    assert_eq!(other.len(), 3, "playlist and two segments");
+    for request in &other {
+        assert!(!request.contains("fake-secret"), "credentials leaked to another host:\n{request}");
+        assert!(request.contains("referer: https://example.com/watch"), "other headers still go along");
+    }
 }

@@ -12,7 +12,7 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use reqwest::header::HeaderMap;
+use reqwest::header::{AUTHORIZATION, COOKIE, HeaderMap, HeaderName, PROXY_AUTHORIZATION};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
@@ -131,10 +131,16 @@ impl VideoJob {
             .with_context(|| format!("yt-dlp is not installed. Install it with: {INSTALL_YTDLP}"))?;
         let ffmpeg = find_tool("ffmpeg");
 
+        // Lives until yt-dlp is done with it, then deletes itself.
+        let cookies = CookieFile::create(&req.url, &req.headers)?;
         let mut cmd = Command::new(&ytdlp);
         #[cfg(windows)]
         cmd.creation_flags(CREATE_NO_WINDOW);
-        cmd.args(["-J", "--no-playlist", "--no-warnings"]).args(header_args(&req.headers)).arg(&req.url);
+        cmd.args(["-J", "--no-playlist", "--no-warnings"]).args(header_args(&req.headers));
+        if let Some(c) = &cookies {
+            cmd.arg("--cookies").arg(&c.path);
+        }
+        cmd.arg(&req.url);
         cmd.env("PATH", child_path()).stdin(Stdio::null()).kill_on_drop(true);
         let out = tokio::time::timeout(Duration::from_secs(90), cmd.output())
             .await
@@ -206,7 +212,12 @@ impl VideoJob {
         if self.req.rate_limit > 0 {
             cmd.args(["--limit-rate", &self.req.rate_limit.to_string()]);
         }
-        cmd.args(header_args(&self.req.headers)).arg(&self.req.url);
+        let cookies = CookieFile::create(&self.req.url, &self.req.headers)?;
+        cmd.args(header_args(&self.req.headers));
+        if let Some(c) = &cookies {
+            cmd.arg("--cookies").arg(&c.path);
+        }
+        cmd.arg(&self.req.url);
         cmd.env("PATH", child_path()).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
         cmd.kill_on_drop(true);
 
@@ -277,12 +288,92 @@ pub fn format_for(quality: Option<&str>, has_ffmpeg: bool) -> String {
     }
 }
 
+/// Headers for yt-dlp's command line, where anything is visible to other
+/// programs. Credentials never go there: cookies travel in a [`CookieFile`],
+/// and other credentials are dropped, since yt-dlp would send them to every
+/// host it contacts.
 fn header_args(headers: &HeaderMap) -> Vec<String> {
     headers
         .iter()
+        .filter(|(k, _)| !is_credential(k))
         .filter_map(|(k, v)| Some(vec!["--add-header".into(), format!("{}:{}", k.as_str(), v.to_str().ok()?)]))
         .flatten()
         .collect()
+}
+
+fn is_credential(name: &HeaderName) -> bool {
+    name == COOKIE || name == AUTHORIZATION || name == PROXY_AUTHORIZATION
+}
+
+/// The browser's cookies for a video page, as a cookies.txt that only the
+/// user can read. Each cookie is scoped to the page's host (and to HTTPS when
+/// the page is), so yt-dlp can't send it anywhere else. The file and its
+/// folder are deleted on drop: after success, failure and cancellation alike.
+struct CookieFile {
+    dir: PathBuf,
+    path: PathBuf,
+}
+
+impl CookieFile {
+    fn create(url: &str, headers: &HeaderMap) -> Result<Option<Self>> {
+        let pairs: Vec<(&str, &str)> = headers
+            .get_all(COOKIE)
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .flat_map(|v| v.split(';'))
+            .filter_map(|c| c.trim().split_once('='))
+            .filter(|(name, value)| !name.is_empty() && !(name.contains('\t') || value.contains('\t')))
+            .collect();
+        if pairs.is_empty() {
+            return Ok(None);
+        }
+        let url = url::Url::parse(url).with_context(|| format!("invalid URL: {url}"))?;
+        let host = url.host_str().context("the video URL has no host")?;
+        let secure = if url.scheme() == "https" { "TRUE" } else { "FALSE" };
+        let mut text = String::from("# Netscape HTTP Cookie File\n");
+        for (name, value) in pairs {
+            // domain, include subdomains, path, secure, expires (0 = session), name, value
+            text.push_str(&format!("{host}\tFALSE\t/\t{secure}\t0\t{name}\t{value}\n"));
+        }
+        let dir = private_temp_dir().context("could not create a private folder for cookies")?;
+        let file = Self { path: dir.join("cookies.txt"), dir };
+        write_private(&file.path, text.as_bytes()).context("could not write the cookie file")?;
+        Ok(Some(file))
+    }
+}
+
+impl Drop for CookieFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+/// A new folder in the temp directory that only the user can open.
+fn private_temp_dir() -> std::io::Result<PathBuf> {
+    let base = std::env::temp_dir();
+    for n in 0..100u32 {
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.subsec_nanos());
+        let dir = base.join(format!("flash-{}-{nanos:x}-{n}", std::process::id()));
+        let mut builder = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+        match builder.create(&dir) {
+            Ok(()) => return Ok(dir),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Err(std::io::ErrorKind::AlreadyExists.into())
+}
+
+/// Writes a new file only the user can read (Windows keeps the temp folder per user).
+fn write_private(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    options.open(path)?.write_all(data)
 }
 
 /// Picks a name no finished file is using. Unfinished `.part` files with the

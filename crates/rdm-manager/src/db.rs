@@ -138,15 +138,48 @@ pub enum GroupBy {
     Host,
 }
 
+/// Makes the database's folder (0700) and the database with SQLite's
+/// companion files (0600) private to the user before SQLite opens them, and
+/// tightens installs from before this. SQLite creates new WAL and
+/// shared-memory files with the database's own permissions.
+#[cfg(unix)]
+fn lock_down(path: &Path) -> std::io::Result<()> {
+    use std::fs::{DirBuilder, OpenOptions, Permissions, set_permissions};
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+    if let Some(dir) = path.parent() {
+        DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
+        set_permissions(dir, Permissions::from_mode(0o700))?;
+    }
+    // Creates the database file, private, if it doesn't exist yet.
+    OpenOptions::new().create(true).append(true).mode(0o600).open(path)?;
+    for suffix in ["", "-wal", "-shm", "-journal"] {
+        let mut file = path.as_os_str().to_owned();
+        file.push(suffix);
+        match set_permissions(&file, Permissions::from_mode(0o600)) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// Windows keeps each user's app data folder private already.
+#[cfg(not(unix))]
+fn lock_down(path: &Path) -> std::io::Result<()> {
+    match path.parent() {
+        Some(dir) => std::fs::create_dir_all(dir),
+        None => Ok(()),
+    }
+}
+
 const COLUMNS: &str = "id, url, kind, dir, file_name, path, status, total, downloaded, connections, \
      speed_limit, checksum, headers, error, manual, auto_category, resumable, added_at, finished_at, \
      retry_at, auto_retries, quality";
 
 impl Db {
     pub fn open(path: &Path) -> Result<Self> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
+        // The pairing token and pending downloads' cookies live in here.
+        lock_down(path).with_context(|| format!("could not secure {}", path.display()))?;
         let conn = Connection::open(path).with_context(|| format!("could not open {}", path.display()))?;
         Self::init(conn)
     }
@@ -501,6 +534,30 @@ pub(crate) fn now_ms() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn database_is_private_to_its_owner() {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("app/flash.sqlite3");
+        let db = Db::open(&path).unwrap();
+        db.save_settings(&Settings::default()).unwrap();
+        assert_eq!(mode(path.parent().unwrap()), 0o700);
+        assert_eq!(mode(&path), 0o600);
+        // SQLite's own files, while it has them open, follow the database.
+        let wal = PathBuf::from(format!("{}-wal", path.display()));
+        assert_eq!(mode(&wal), 0o600);
+        drop(db);
+
+        // Installs from before this are tightened on the next start.
+        for p in [path.parent().unwrap(), &path] {
+            std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let _db = Db::open(&path).unwrap();
+        assert_eq!((mode(path.parent().unwrap()), mode(&path)), (0o700, 0o600));
+    }
 
     fn new(url: &str) -> NewDownload {
         NewDownload {

@@ -6,12 +6,23 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use rdm_core::{Outcome, VideoJob, VideoRequest};
-use reqwest::header::HeaderMap;
+use reqwest::header::{HeaderMap, HeaderValue};
 use tokio_util::sync::CancellationToken;
 
 /// Behaves like yt-dlp for the flags RDM uses: `-J` prints details; a
 /// download prints progress lines, writes the file, prints its path.
 const FAKE_YTDLP: &str = r#"#!/bin/sh
+log="$(dirname "$0")/calls.log"
+echo "ARGS $*" >> "$log"
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--cookies" ]; then
+    echo "COOKIEFILE $a" >> "$log"
+    ls -ld "$a" "$(dirname "$a")" >> "$log"
+    cat "$a" >> "$log"
+  fi
+  prev="$a"
+done
 url=""; out=""; prev=""
 for a in "$@"; do
   [ "$prev" = "-o" ] && out="$a"
@@ -91,4 +102,35 @@ async fn reports_ytdlp_errors() {
         .err()
         .expect("should fail");
     assert!(format!("{err:#}").contains("Video unavailable"), "{err:#}");
+}
+
+#[tokio::test]
+async fn cookies_reach_ytdlp_only_through_a_private_scoped_file() {
+    let tools = tempfile::tempdir().unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let mut req = request("https://www.youtube.com/watch?v=abc", out.path(), fake_ytdlp(tools.path()));
+    req.headers.insert("cookie", HeaderValue::from_static("SID=fake-secret; PREF=f6=40"));
+    req.headers.insert("authorization", HeaderValue::from_static("Bearer fake-token"));
+    req.headers.insert("referer", HeaderValue::from_static("https://www.youtube.com/"));
+    let job = VideoJob::prepare(req).await.unwrap();
+    assert!(matches!(job.run(CancellationToken::new()).await.unwrap(), Outcome::Completed(_)));
+
+    let log = std::fs::read_to_string(tools.path().join("calls.log")).unwrap();
+    let args: Vec<&str> = log.lines().filter(|l| l.starts_with("ARGS ")).collect();
+    assert_eq!(args.len(), 2, "details, then the download");
+    for line in &args {
+        assert!(!line.contains("fake-secret") && !line.contains("fake-token"), "credentials on the command line: {line}");
+        assert!(line.contains("referer:https://www.youtube.com/"), "other headers still go along: {line}");
+    }
+    // Scoped to the page's host, HTTPS only.
+    assert!(log.contains("www.youtube.com\tFALSE\t/\tTRUE\t0\tSID\tfake-secret\n"), "{log}");
+    assert!(log.contains("www.youtube.com\tFALSE\t/\tTRUE\t0\tPREF\tf6=40\n"), "{log}");
+    assert!(!log.contains("fake-token"), "other credentials are dropped");
+    // Readable by the user only, and gone afterwards.
+    assert_eq!(log.lines().filter(|l| l.starts_with("-rw-------")).count(), 2, "{log}");
+    assert_eq!(log.lines().filter(|l| l.starts_with("drwx------")).count(), 2, "{log}");
+    for path in log.lines().filter_map(|l| l.strip_prefix("COOKIEFILE ")) {
+        assert!(!Path::new(path).exists(), "{path} was left behind");
+        assert!(!Path::new(path).parent().unwrap().exists());
+    }
 }

@@ -3,7 +3,6 @@
 const DEFAULTS = {
   enabled: true,
   port: 47321,
-  token: '',
   // Only downloads with these extensions are taken over from the browser.
   extensions: 'zip rar 7z gz bz2 xz tar tgz zst dmg pkg iso img exe msi deb rpm apk ' +
     'mp4 mkv avi mov webm m4v mp3 flac wav m4a aac pdf epub bin',
@@ -31,24 +30,48 @@ function isVideoSite(url) {
 /** Flash's pairing tokens are 24 random bytes in hex. */
 const TOKEN_LENGTH = 48;
 
+/** Preferences, which sync between the user's browsers. Never the token. */
 async function getSettings() {
-  return { ...DEFAULTS, ...(await chrome.storage.sync.get(null)) };
+  const { token: _, ...prefs } = await chrome.storage.sync.get(null);
+  return { ...DEFAULTS, ...prefs };
+}
+
+/**
+ * The pairing token. It belongs to this computer's Flash, so it lives in
+ * local storage, which never syncs. Only extension pages and the background
+ * worker read it; the YouTube content script asks the worker instead.
+ */
+async function getToken() {
+  const { token } = await chrome.storage.local.get('token');
+  if (token) return token;
+  // Older versions kept it in sync storage, which copies it to other browsers.
+  const { token: synced } = await chrome.storage.sync.get('token');
+  if (!synced) return '';
+  await chrome.storage.local.set({ token: synced });
+  await chrome.storage.sync.remove('token');
+  return synced;
+}
+
+async function setToken(token) {
+  await chrome.storage.local.set({ token });
+  await chrome.storage.sync.remove('token');
 }
 
 async function rdmFetch(path, options = {}) {
   const s = await getSettings();
-  if (!s.token) throw new Error('Not paired yet: paste the token from Flash → Settings → Browser into the extension options.');
+  const token = await getToken();
+  if (!token) throw new Error('Not paired yet: paste the token from Flash → Settings → Browser into the extension options.');
   let res;
   try {
     res = await fetch(`http://127.0.0.1:${s.port}${path}`, {
       ...options,
-      headers: { 'Content-Type': 'application/json', 'X-RDM-Token': s.token, ...(options.headers || {}) },
+      headers: { 'Content-Type': 'application/json', 'X-RDM-Token': token, ...(options.headers || {}) },
     });
   } catch (e) {
     throw new Error(`Can't reach Flash on port ${s.port} (${e.message}). Is Flash running, and is the port the same as in Flash → Settings → Browser?`);
   }
   if (res.status === 401) {
-    throw new Error(`Flash rejected the pairing token${s.token.length === TOKEN_LENGTH ? '' : ` (it should be ${TOKEN_LENGTH} characters, this one is ${s.token.length})`}. Click Copy in Flash → Settings → Browser and paste it again.`);
+    throw new Error(`Flash rejected the pairing token${token.length === TOKEN_LENGTH ? '' : ` (it should be ${TOKEN_LENGTH} characters, this one is ${token.length})`}. Click Copy in Flash → Settings → Browser and paste it again.`);
   }
   if (!res.ok) throw new Error(`Flash refused the request (${res.status}): ${await res.text()}`);
   return res.json();

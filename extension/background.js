@@ -35,7 +35,7 @@ function shouldCapture(item, s) {
  */
 async function takeOver(item, release) {
   const s = await getSettings();
-  if (!s.enabled || !s.token) return release();
+  if (!s.enabled || !(await getToken())) return release();
 
   let info;
   if (!shouldCapture(item, s)) {
@@ -197,6 +197,16 @@ if (chrome.downloads.onDeterminingFilename) {
   chrome.downloads.onCreated.addListener((item) => takeOver(item, () => {}).catch(() => {}));
 }
 
+// Moves a token left in sync storage by an older version out of it.
+getToken();
+
+// The YouTube button only needs to know whether Flash is paired, not the token.
+chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
+  if (msg?.type !== 'rdm-paired') return false;
+  getToken().then((token) => reply(!!token));
+  return true;
+});
+
 // ---------- right-click menu ----------
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -210,7 +220,7 @@ chrome.runtime.onInstalled.addListener(() => {
       documentUrlPatterns: VIDEO_SITES.flatMap((s) => [`*://${s}/*`, `*://*.${s}/*`]),
     });
   });
-  getSettings().then((s) => { if (!s.token) chrome.runtime.openOptionsPage(); });
+  getToken().then((token) => { if (!token) chrome.runtime.openOptionsPage(); });
 });
 
 /** Opens the dialog for the video on a video-site page (via yt-dlp). */

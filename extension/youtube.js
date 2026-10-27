@@ -132,11 +132,13 @@
 
   async function loadSetting() {
     const s = await getSettings();
-    wanted = s.videoButton && !!s.token;
+    const paired = await chrome.runtime.sendMessage({ type: 'rdm-paired' }).catch(() => false);
+    wanted = s.videoButton && paired;
     update();
   }
 
-  chrome.storage.onChanged.addListener((_, area) => { if (area === 'sync') loadSetting(); });
+  // Re-check after settings change or the extension is (re)paired.
+  chrome.storage.onChanged.addListener(() => loadSetting());
   document.addEventListener('yt-navigate-finish', update);
   // The player is created late and Shorts swap it while scrolling. YouTube
   // changes the page constantly, so check at most once a frame.
