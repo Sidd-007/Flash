@@ -34,27 +34,62 @@ pub fn is_video_site(url: &str) -> bool {
     VIDEO_SITES.iter().any(|s| host == *s || host.ends_with(&format!(".{s}")))
 }
 
-/// Finds a command-line tool. Apps opened from Finder get a bare `PATH`, so
-/// the usual Homebrew and pip locations are searched too.
+/// How to install yt-dlp, for messages.
+#[cfg(windows)]
+pub const INSTALL_YTDLP: &str = "winget install yt-dlp.yt-dlp";
+#[cfg(not(windows))]
+pub const INSTALL_YTDLP: &str = "brew install yt-dlp";
+
+/// The user's home folder.
+pub fn home_dir() -> Option<PathBuf> {
+    std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from)
+}
+
+/// Finds a command-line tool. Apps opened from Finder or the Start menu may
+/// get a bare `PATH`, so the usual package manager locations are searched too.
 pub fn find_tool(name: &str) -> Option<PathBuf> {
-    search_path().into_iter().map(|dir| dir.join(name)).find(|p| is_executable(p))
+    let file = if cfg!(windows) { format!("{name}.exe") } else { name.to_owned() };
+    search_path().into_iter().map(|dir| dir.join(&file)).find(|p| is_executable(p))
 }
 
 fn search_path() -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
-    for extra in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"] {
-        dirs.push(extra.into());
-    }
-    if let Some(home) = std::env::var_os("HOME") {
-        dirs.push(Path::new(&home).join(".local/bin"));
+    if cfg!(windows) {
+        // winget, Scoop and Chocolatey.
+        if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+            dirs.push(Path::new(&local).join(r"Microsoft\WinGet\Links"));
+        }
+        if let Some(home) = home_dir() {
+            dirs.push(home.join(r"scoop\shims"));
+        }
+        if let Some(data) = std::env::var_os("ProgramData") {
+            dirs.push(Path::new(&data).join(r"chocolatey\bin"));
+        }
+    } else {
+        for extra in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"] {
+            dirs.push(extra.into());
+        }
+        if let Some(home) = home_dir() {
+            dirs.push(home.join(".local/bin"));
+        }
     }
     dirs
 }
 
+#[cfg(unix)]
 fn is_executable(path: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
     path.metadata().is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
 }
+
+#[cfg(windows)]
+fn is_executable(path: &Path) -> bool {
+    path.is_file()
+}
+
+/// Windows would otherwise open a console window for every helper we run.
+#[cfg(windows)]
+pub(crate) const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// `PATH` for child processes, so yt-dlp can find ffmpeg and friends too.
 fn child_path() -> std::ffi::OsString {
@@ -93,10 +128,12 @@ impl VideoJob {
             .ytdlp
             .clone()
             .or_else(|| find_tool("yt-dlp"))
-            .context("yt-dlp is not installed. Install it with: brew install yt-dlp")?;
+            .with_context(|| format!("yt-dlp is not installed. Install it with: {INSTALL_YTDLP}"))?;
         let ffmpeg = find_tool("ffmpeg");
 
         let mut cmd = Command::new(&ytdlp);
+        #[cfg(windows)]
+        cmd.creation_flags(CREATE_NO_WINDOW);
         cmd.args(["-J", "--no-playlist", "--no-warnings"]).args(header_args(&req.headers)).arg(&req.url);
         cmd.env("PATH", child_path()).stdin(Stdio::null()).kill_on_drop(true);
         let out = tokio::time::timeout(Duration::from_secs(90), cmd.output())
@@ -148,6 +185,8 @@ impl VideoJob {
     pub async fn run(self, cancel: CancellationToken) -> Result<Outcome> {
         let template = self.req.dir.join(format!("{}.%(ext)s", self.stem));
         let mut cmd = Command::new(&self.ytdlp);
+        #[cfg(windows)]
+        cmd.creation_flags(CREATE_NO_WINDOW);
         cmd.args(["--newline", "--progress", "--no-warnings", "--no-playlist", "--no-mtime", "--continue"])
             .args(["-f", &format_for(self.req.quality.as_deref(), self.ffmpeg.is_some())])
             .arg("-o")

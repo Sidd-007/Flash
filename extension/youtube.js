@@ -8,7 +8,7 @@
     .pill { display: flex; align-items: stretch; height: 30px; border-radius: 8px; overflow: hidden;
       background: rgba(10, 10, 10, 0.82); color: #fafafa; backdrop-filter: blur(8px);
       box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.22), 0 6px 20px rgba(0, 0, 0, 0.35);
-      font: 500 12px/1 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: 0.01em;
+      font: 500 12px/1 ui-monospace, "SF Mono", "Cascadia Mono", Consolas, Menlo, monospace; letter-spacing: 0.01em;
       transition: opacity 0.16s ease, transform 0.16s ease; }
     .pill.hidden { opacity: 0; transform: translateY(-4px); pointer-events: none; }
     button { all: unset; display: flex; align-items: center; gap: 7px; padding: 0 11px; cursor: pointer; }

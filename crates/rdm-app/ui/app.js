@@ -202,7 +202,7 @@ function rowActions(d) {
   if (d.status === 'running' || d.status === 'queued') acts.push(['pause', 'Pause', () => act('pause', d.id)]);
   if (d.status === 'paused') acts.push(['play', 'Resume', () => act('resume', d.id)]);
   if (d.status === 'failed') acts.push(['retry', 'Retry', () => act('resume', d.id)]);
-  if (d.path) acts.push(['reveal', 'Reveal in Finder', () => act('reveal_download', d.id)]);
+  if (d.path) acts.push(['reveal', `Show in ${FILE_MANAGER}`, () => act('reveal_download', d.id)]);
   acts.push(['remove', 'Remove', () => { state.selected = new Set([d.id]); render(); openRemove(); }]);
   return acts;
 }
@@ -433,7 +433,7 @@ function paletteCommands() {
     ['ZZZ', `${s.keep_awake ? 'Allow' : 'Prevent'} sleep while downloading`, '', () => toggleSetting('keep_awake')],
     ['RTY', `${s.auto_retry ? 'Turn off' : 'Turn on'} automatic retries`, '', () => toggleSetting('auto_retry')],
   ];
-  return cmds.map(([icon, title, hint, run]) => ({ icon, title, hint, run, group: 'Commands' }));
+  return cmds.map(([icon, title, hint, run]) => ({ icon, title, hint: keyLabel(hint), run, group: 'Commands' }));
 }
 
 function paletteDownloads() {
@@ -805,7 +805,7 @@ async function refreshSegments() {
 
 function onRowClick(e, id) {
   if (e.button !== 0) return;
-  if (e.metaKey) {
+  if (modKey(e)) {
     state.selected.has(id) ? state.selected.delete(id) : state.selected.add(id);
     state.anchor = id;
   } else if (e.shiftKey && state.anchor != null) {
@@ -845,7 +845,7 @@ function onRowMenu(e, id) {
   const one = sel.length === 1 ? sel[0] : null;
   const items = [];
   if (one?.status === 'completed') items.push(['Open', () => act('open_download', one.id)]);
-  if (one?.path) items.push(['Show in Finder', () => act('reveal_download', one.id)]);
+  if (one?.path) items.push([`Show in ${FILE_MANAGER}`, () => act('reveal_download', one.id)]);
   if (items.length) items.push('-');
   if (sel.some((d) => d.status === 'paused' || d.status === 'failed')) {
     items.push(['Resume', () => forSelected('resume', (d) => d.status === 'paused' || d.status === 'failed')]);
@@ -948,7 +948,7 @@ function showDuplicate(note, d) {
   note.classList.toggle('hidden', !d);
   if (!d) return;
   const done = d.status === 'completed';
-  const where = d.path ? d.path.replace(/\/[^/]+$/, '') : '';
+  const where = d.path ? dirName(d.path) : '';
   note.replaceChildren(
     document.createTextNode(done ? 'Already downloaded: ' : `Already in your list (${STATE_LABEL[d.status] || d.status}): `),
     el('b', '', d.name),
@@ -1030,7 +1030,7 @@ let homeDir = null;
 async function home() {
   if (homeDir === null) {
     try { homeDir = await window.__TAURI__.path.homeDir(); } catch { homeDir = ''; }
-    homeDir ||= (state.settings?.download_dir || '').match(/^\/Users\/[^/]+/)?.[0] || '';
+    homeDir ||= (state.settings?.download_dir || '').match(/^(\/Users\/[^/]+|[A-Za-z]:\\Users\\[^\\]+)/)?.[0] || '';
   }
   return homeDir;
 }
@@ -1040,7 +1040,7 @@ function tildify(path) {
 }
 
 function folderName(path) {
-  return path.split('/').filter(Boolean).pop() || path;
+  return baseName(path);
 }
 
 /** Fills Save to with Flash's default, recent folders and common ones; '' is the default. */
@@ -1056,7 +1056,8 @@ async function fillAddFolders(selected) {
   };
   add('', def ? `${folderName(def)}  —  default` : 'Default folder');
   for (const p of loadPref('recentDirs', [])) add(p, `${folderName(p)}  —  ${tildify(p)}`);
-  if (h) for (const d of ['Desktop', 'Documents', 'Movies', 'Music']) if (`${h}/${d}` !== def) add(`${h}/${d}`, `${d}  —  ~/${d}`);
+  const common = IS_MAC ? ['Desktop', 'Documents', 'Movies', 'Music'] : ['Desktop', 'Documents', 'Videos', 'Music'];
+  if (h) for (const d of common) if (joinPath(h, d) !== def) add(joinPath(h, d), `${d}  —  ${tildify(joinPath(h, d))}`);
   if (selected && !seen.has(selected)) add(selected, `${folderName(selected)}  —  ${tildify(selected)}`);
   $('#a-dir').replaceChildren(...options.map(([value, label]) => {
     const o = document.createElement('option');
@@ -1131,7 +1132,7 @@ function renderTheme() {
     $(`#t-${key}-clear`).disabled = !value;
   }
   const bg = t.background;
-  $('#t-mode').textContent = bg ? (isDark(bg) ? 'dark' : 'light') : 'follows macOS';
+  $('#t-mode').textContent = bg ? (isDark(bg) ? 'dark' : 'light') : `follows ${IS_MAC ? 'macOS' : 'Windows'}`;
   const cols = [32, 58, 41, 76, 64, 90, 52, 70, 84, 100, 61, 45];
   if (!$('.t-cols').children.length) {
     $('.t-cols').replaceChildren(...cols.map((h) => {
@@ -1288,12 +1289,13 @@ async function openSettings() {
   $('#s-quality').value = s.video_quality || 'best';
   try {
     const t = await invoke('tools_status');
+    await home();
     const line = (name, path, hint) => {
       const row = document.createElement('div');
       if (path) {
         const b = document.createElement('b');
         b.textContent = name;
-        row.append(b, ` ${path.replace(/^\/Users\/[^/]+/, '~')}`);
+        row.append(b, ` ${tildify(path)}`);
       } else {
         row.className = 'missing';
         row.textContent = `${name} missing · ${hint}`;
@@ -1301,8 +1303,8 @@ async function openSettings() {
       return row;
     };
     $('#s-tools').replaceChildren(
-      line('yt-dlp', t.ytdlp, 'brew install yt-dlp'),
-      line('ffmpeg', t.ffmpeg, 'brew install ffmpeg'),
+      line('yt-dlp', t.ytdlp, IS_MAC ? 'brew install yt-dlp' : 'winget install yt-dlp.yt-dlp'),
+      line('ffmpeg', t.ffmpeg, IS_MAC ? 'brew install ffmpeg' : 'winget install Gyan.FFmpeg'),
     );
   } catch { /* ignore */ }
   $('#s-usecat').checked = s.use_categories;
@@ -1497,20 +1499,20 @@ function bind() {
   });
 
   document.addEventListener('keydown', (e) => {
-    if (e.metaKey && e.key === 'k') { e.preventDefault(); openPalette(); return; }
+    if (modKey(e) && e.key === 'k') { e.preventDefault(); openPalette(); return; }
     if (document.querySelector('dialog[open]')) return;
     const typing = ['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName);
-    if (e.metaKey && e.key === 'n') { e.preventDefault(); openAdd(); }
-    else if (e.metaKey && e.key === ',') { e.preventDefault(); openSettings(); }
-    else if (e.metaKey && e.key === 'a' && !typing) { e.preventDefault(); state.selected = new Set(state.visible); render(); }
+    if (modKey(e) && e.key === 'n') { e.preventDefault(); openAdd(); }
+    else if (modKey(e) && e.key === ',') { e.preventDefault(); openSettings(); }
+    else if (modKey(e) && e.key === 'a' && !typing) { e.preventDefault(); state.selected = new Set(state.visible); render(); }
     else if (typing) {
       if (e.key === 'Escape') document.activeElement.blur();
       return;
     }
     else if (e.key === '/') { e.preventDefault(); $('#search').focus(); }
-    else if (/^[1-5]$/.test(e.key) && !e.metaKey) selectFilter(STATUS_FILTERS[Number(e.key) - 1][0]);
-    else if (e.key === '6' && !e.metaKey) openStats();
-    else if (e.key === '7' && !e.metaKey) openTheme();
+    else if (/^[1-5]$/.test(e.key) && !modKey(e)) selectFilter(STATUS_FILTERS[Number(e.key) - 1][0]);
+    else if (e.key === '6' && !modKey(e)) openStats();
+    else if (e.key === '7' && !modKey(e)) openTheme();
     else if (e.key === 'Backspace' || e.key === 'Delete') openRemove();
     else if (e.key === ' ') {
       e.preventDefault();
@@ -1522,7 +1524,15 @@ function bind() {
 }
 
 async function main() {
+  localizePlatform();
   bind();
+  if (!IS_MAC) {
+    const win = window.__TAURI__.window.getCurrentWindow();
+    $('#win-min').onclick = () => win.minimize();
+    $('#win-max').onclick = () => win.toggleMaximize();
+    // Closing hides the window; downloads carry on from the tray.
+    $('#win-close').onclick = () => win.close();
+  }
   state.settings = await invoke('get_settings');
   applyTheme(state.settings.theme);
   await reload();

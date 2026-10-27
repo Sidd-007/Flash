@@ -351,7 +351,10 @@ fn ffmpeg_available() -> bool {
 
 fn remux(input: &Path, output: &Path) -> Result<()> {
     let ffmpeg = crate::video::find_tool("ffmpeg").context("ffmpeg not found")?;
-    let status = Command::new(ffmpeg)
+    let mut cmd = Command::new(ffmpeg);
+    #[cfg(windows)]
+    std::os::windows::process::CommandExt::creation_flags(&mut cmd, crate::video::CREATE_NO_WINDOW);
+    let status = cmd
         .args(["-y", "-loglevel", "error", "-i"])
         .arg(input)
         .args(["-c", "copy", "-movflags", "+faststart"])

@@ -67,7 +67,7 @@ function row(d) {
   const action = d.status === 'running' || d.status === 'queued' ? ['pause', 'Pause', 'pause']
     : d.status === 'paused' ? ['play', 'Resume', 'resume']
     : d.status === 'failed' ? ['retry', 'Retry', 'resume']
-    : d.path ? ['reveal', 'Show in Finder', 'reveal_download'] : null;
+    : d.path ? ['reveal', `Show in ${FILE_MANAGER}`, 'reveal_download'] : null;
   if (action) {
     const b = document.createElement('button');
     b.type = 'button';

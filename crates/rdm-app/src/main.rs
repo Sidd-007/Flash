@@ -1,8 +1,12 @@
 //! Flash desktop app: a Tauri shell around `rdm-manager`.
 
+// No console window behind the app on Windows (debug builds keep it for logs).
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod bridge;
 mod clipboard;
 mod commands;
+mod os;
 mod profile;
 mod tray;
 
@@ -18,6 +22,9 @@ fn main() {
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec!["--hidden"])))
         .setup(move |app| {
             let db_path = app.path().app_data_dir()?.join("rdm.sqlite3");
             // The manager spawns its queue tasks, so open it inside the runtime.
@@ -32,8 +39,8 @@ fn main() {
             bridge::start(app.handle().clone(), manager.clone(), bridge, capture);
 
             // Keep "open at login" pointing at this copy of the app after a rename or move.
-            if commands::get_autostart().unwrap_or(false) {
-                let _ = commands::set_autostart(true);
+            if commands::get_autostart(app.handle().clone()).unwrap_or(false) {
+                let _ = commands::set_autostart(app.handle().clone(), true);
             }
 
             tray::create(app.handle())?;
@@ -100,8 +107,8 @@ fn main() {
 /// Relays manager events to the UI, the menu bar and notifications.
 async fn forward_events(app: tauri::AppHandle, manager: Manager) {
     let mut rx = manager.subscribe();
-    // `caffeinate` holds off idle sleep while downloads run; it exits with us.
-    let mut awake: Option<std::process::Child> = None;
+    // Keeps the computer from sleeping while downloads run.
+    let mut awake: Option<os::KeepAwake> = None;
     loop {
         let event = match rx.recv().await {
             Ok(e) => e,
@@ -113,13 +120,9 @@ async fn forward_events(app: tauri::AppHandle, manager: Manager) {
                 tray::set_speed(&app, *total_speed);
                 let want = !items.is_empty() && manager.settings().keep_awake;
                 if want && awake.is_none() {
-                    awake = std::process::Command::new("/usr/bin/caffeinate")
-                        .args(["-i", "-w", &std::process::id().to_string()])
-                        .spawn()
-                        .ok();
-                } else if !want && let Some(mut child) = awake.take() {
-                    let _ = child.kill();
-                    let _ = child.wait();
+                    awake = os::KeepAwake::start();
+                } else if !want {
+                    awake = None;
                 }
             }
             Event::Finished { name, ok, error, .. } if manager.settings().notify => {

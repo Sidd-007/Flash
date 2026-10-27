@@ -23,7 +23,7 @@ use tokio_util::sync::CancellationToken;
 pub use db::{Download, Group, Kind, Status};
 pub use stats::{Day, Stats};
 pub use rdm_core::SegmentView;
-pub use rdm_core::video::find_tool;
+pub use rdm_core::video::{find_tool, home_dir};
 pub use settings::{Category, Schedule, Settings, Theme};
 
 use db::{Db, HistoryEntry, NewDownload};
@@ -236,7 +236,7 @@ impl Manager {
         for url in urls {
             let kind = req.kind.unwrap_or_else(|| detect_kind(&url));
             if kind == Kind::Video && rdm_core::video::find_tool("yt-dlp").is_none() {
-                bail!("video sites need yt-dlp. Install it with: brew install yt-dlp");
+                bail!("video sites need yt-dlp. Install it with: {}", rdm_core::video::INSTALL_YTDLP);
             }
             let id = db.insert(&NewDownload {
                 kind,

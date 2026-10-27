@@ -1,4 +1,3 @@
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use chrono::NaiveTime;
@@ -161,14 +160,12 @@ fn default_categories() -> Vec<Category> {
 }
 
 fn dirs_downloads() -> PathBuf {
-    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join("Downloads")
+    rdm_core::video::home_dir().unwrap_or_default().join("Downloads")
 }
 
 pub(crate) fn random_token() -> String {
     let mut bytes = [0u8; 24];
-    std::fs::File::open("/dev/urandom")
-        .and_then(|mut f| f.read_exact(&mut bytes))
-        .expect("read /dev/urandom");
+    getrandom::fill(&mut bytes).expect("the system has no random number source");
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 

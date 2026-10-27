@@ -38,14 +38,21 @@ function tildify(path) {
 }
 
 function folderName(path) {
-  return path.split('/').filter(Boolean).pop() || path;
+  return path.split(/[\\/]/).filter(Boolean).pop() || path;
 }
+
+/** Windows paths use backslashes; keep to whichever the home folder uses. */
+const isWindowsPath = (path) => /^[A-Za-z]:\\/.test(path || '');
 
 /** Fills Where with: Flash's default, common folders, and recently used ones. */
 async function fillFolders(selected) {
   const recent = (await chrome.storage.local.get(RECENT_KEY))[RECENT_KEY] || [];
   const home = request.home;
-  const common = home ? ['Desktop', 'Documents', 'Movies', 'Music'].map((d) => `${home}/${d}`) : [];
+  const windows = isWindowsPath(home);
+  const common = home
+    ? (windows ? ['Desktop', 'Documents', 'Videos', 'Music'] : ['Desktop', 'Documents', 'Movies', 'Music'])
+      .map((d) => `${home}${windows ? '\\' : '/'}${d}`)
+    : [];
   const seen = new Set();
   const options = [];
   const add = (value, label) => {
@@ -91,7 +98,7 @@ function selectStem(input, hasExtension) {
 async function chooseFolder() {
   $('#choose').disabled = true;
   try {
-    // Flash shows the native macOS folder picker and returns the path.
+    // Flash shows the system's folder picker and returns the path.
     const { path } = await rdmFetch('/v1/choose-folder', {
       method: 'POST',
       body: JSON.stringify({ start: $('#dir').value || request.download_dir }),
@@ -186,7 +193,9 @@ async function main() {
     document.querySelector('.sheet-title').textContent = 'Download video with Flash';
     // Plain links can fall back to Chrome; video pages can't.
     $('#browser').hidden = true;
-    if (!request.has_ytdlp) showError('Flash needs yt-dlp for video sites. In Terminal: brew install yt-dlp');
+    if (!request.has_ytdlp) {
+      showError(`Flash needs yt-dlp for video sites. Install it with: ${isWindowsPath(request.home) ? 'winget install yt-dlp.yt-dlp' : 'brew install yt-dlp'}`);
+    }
   }
   let host = '';
   try { host = new URL(request.url).host; } catch { /* keep empty */ }

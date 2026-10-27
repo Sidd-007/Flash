@@ -1,13 +1,13 @@
 # Flash
 
-A fast download manager for macOS, written in Rust.
+A fast download manager for macOS and Windows, written in Rust.
 
 - Splits each file across parallel connections, and resumes after a pause, crash or network drop
-- Queue, scheduler, speed limits and a menu bar panel
+- Queue, scheduler, speed limits and a menu bar (or tray) panel
 - Browser extension that sends downloads to Flash, including YouTube videos
 - Videos from YouTube and similar sites through `yt-dlp`, and HLS streams (`.m3u8`)
 
-## Install
+## Install on macOS
 
 ```bash
 pnpm install
@@ -23,16 +23,40 @@ Move `target/release/bundle/macos/Flash.app` to `/Applications`. The app isn't s
 xattr -dr com.apple.quarantine /Applications/Flash.app
 ```
 
-For video sites, install `yt-dlp` and `ffmpeg`:
+For video sites:
 
 ```bash
 brew install yt-dlp ffmpeg
 ```
 
+## Install on Windows
+
+Download the installer from the latest [CI run](../../actions/workflows/ci.yml): open the run, then **Flash-windows-installer** under Artifacts. Or build it yourself with Rust, pnpm and the Visual Studio C++ build tools:
+
+```powershell
+pnpm install
+```
+
+```powershell
+pnpm build
+```
+
+The installer is in `target\release\bundle\nsis\`. Windows SmartScreen may warn because it isn't signed: choose **More info → Run anyway**.
+
+For video sites:
+
+```powershell
+winget install yt-dlp.yt-dlp
+```
+
+```powershell
+winget install Gyan.FFmpeg
+```
+
 ## Browser extension
 
 1. In Flash, open **Settings → Browser** and copy the pairing token.
-2. In Chrome, open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked** and pick the `extension` folder.
+2. In Chrome or Edge, open `chrome://extensions` (or `edge://extensions`), turn on **Developer mode**, click **Load unpacked** and pick the `extension` folder.
 3. Paste the token in the extension's options.
 
 The extension only talks to Flash on `127.0.0.1`, and only with the token.

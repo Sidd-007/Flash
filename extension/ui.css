@@ -5,8 +5,8 @@
   --text: #0a0a0a; --muted: #6f6f6b; --faint: #a8a8a3;
   --hover: rgba(10, 10, 10, 0.035); --selected: rgba(10, 10, 10, 0.065);
   --solid: #0a0a0a; --solid-text: #fafaf9; --danger: #d4362c; --ok: #0a0a0a;
-  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", sans-serif;
-  --mono: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", "Inter", sans-serif;
+  --mono: "SF Mono", ui-monospace, "Cascadia Mono", Consolas, "JetBrains Mono", Menlo, monospace;
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {

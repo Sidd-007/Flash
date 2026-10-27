@@ -124,7 +124,7 @@ async fn ping(State(ctx): State<Ctx>, headers: HeaderMap) -> Reply {
         "version": env!("CARGO_PKG_VERSION"),
         "download_dir": settings.download_dir,
         "use_categories": settings.use_categories,
-        "home": std::env::var_os("HOME").map(PathBuf::from),
+        "home": rdm_manager::home_dir(),
         "video_quality": settings.video_quality,
         "has_ytdlp": rdm_manager::find_tool("yt-dlp").is_some(),
         // Waiting for a fresh link: send the next download straight away.
@@ -140,7 +140,7 @@ struct ChooseFolder {
 /// Opens the native folder picker for the extension's dialog.
 async fn choose_folder(State(ctx): State<Ctx>, headers: HeaderMap, Json(body): Json<ChooseFolder>) -> Reply {
     check(&ctx, &headers)?;
-    let path = crate::commands::pick_folder(body.start)
+    let path = crate::commands::pick_folder(ctx.app.clone(), body.start)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     Ok(Json(json!({ "path": path })))
@@ -182,10 +182,10 @@ struct Incoming {
     confirmed: bool,
 }
 
-/// `~/Movies` -> `/Users/me/Movies`.
+/// `~/Movies` -> `/Users/me/Movies` (or `~\\Videos` on Windows).
 fn expand_home(dir: &str) -> PathBuf {
-    match (dir.strip_prefix("~/"), std::env::var_os("HOME")) {
-        (Some(rest), Some(home)) => PathBuf::from(home).join(rest),
+    match (dir.strip_prefix("~/").or_else(|| dir.strip_prefix("~\\")), rdm_manager::home_dir()) {
+        (Some(rest), Some(home)) => home.join(rest),
         _ => PathBuf::from(dir),
     }
 }

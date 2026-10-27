@@ -1,6 +1,5 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::ErrorKind;
-use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -534,6 +533,28 @@ async fn stream_segment(ctx: &Ctx, id: usize) -> Result<()> {
     Ok(())
 }
 
+/// Writes all of `data` at `offset` without moving a shared file position.
+#[cfg(unix)]
+fn write_at(file: &File, data: &[u8], offset: u64) -> std::io::Result<()> {
+    std::os::unix::fs::FileExt::write_all_at(file, data, offset)
+}
+
+/// Windows has no positional write that leaves the cursor alone, but only the
+/// writer thread touches this handle, so moving it is harmless.
+#[cfg(windows)]
+fn write_at(file: &File, mut data: &[u8], mut offset: u64) -> std::io::Result<()> {
+    use std::os::windows::fs::FileExt;
+    while !data.is_empty() {
+        let n = file.seek_write(data, offset)?;
+        if n == 0 {
+            return Err(std::io::ErrorKind::WriteZero.into());
+        }
+        data = &data[n..];
+        offset += n as u64;
+    }
+    Ok(())
+}
+
 /// Runs on a blocking thread: writes each chunk at its offset, then records it.
 fn write_loop(
     file: &File,
@@ -542,7 +563,7 @@ fn write_loop(
     progress: &Progress,
 ) -> Result<()> {
     while let Some(chunk) = rx.blocking_recv() {
-        file.write_all_at(&chunk.data, chunk.offset).context("could not write to disk")?;
+        write_at(file, &chunk.data, chunk.offset).context("could not write to disk")?;
         let n = chunk.data.len() as u64;
         plan.lock().unwrap().mark_written(chunk.segment, n);
         progress.add_downloaded(n);

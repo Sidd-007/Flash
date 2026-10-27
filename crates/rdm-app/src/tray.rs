@@ -10,6 +10,12 @@ use tauri::{AppHandle, Emitter, Manager as _, PhysicalPosition};
 use crate::profile::{self, Profile};
 
 const TRAY_ID: &str = "main";
+/// macOS tints a black template icon to suit the menu bar; Windows shows
+/// tray icons as drawn, so it gets the full-colour app icon.
+#[cfg(target_os = "macos")]
+const TRAY_ICON: &[u8] = include_bytes!("../icons/tray.png");
+#[cfg(not(target_os = "macos"))]
+const TRAY_ICON: &[u8] = include_bytes!("../icons/32x32.png");
 /// Panel width in points; matches `panel` in tauri.conf.json.
 const PANEL_WIDTH: f64 = 360.0;
 
@@ -42,8 +48,8 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     app.manage(items);
 
     TrayIconBuilder::with_id(TRAY_ID)
-        .icon(Image::from_bytes(include_bytes!("../icons/tray.png"))?)
-        .icon_as_template(true)
+        .icon(Image::from_bytes(TRAY_ICON)?)
+        .icon_as_template(cfg!(target_os = "macos"))
         .tooltip("Flash")
         .menu(&menu)
         // Left click opens the panel; the menu is on right click.
@@ -100,9 +106,10 @@ pub fn show_profile(app: &AppHandle, profile: Profile) {
 /// doesn't close it straight away.
 static PANEL_SHOWN: Mutex<Option<Instant>> = Mutex::new(None);
 
-/// Shows the panel under the menu bar where it was clicked, or hides it if
-/// it's showing. Placed from the cursor and the screen's usable area rather
-/// than the icon's frame, which macOS doesn't always report correctly.
+/// Shows the panel next to the menu bar or taskbar where it was clicked, or
+/// hides it if it's showing. Placed from the cursor and the screen's usable
+/// area rather than the icon's frame, which macOS doesn't always report
+/// correctly.
 fn toggle_panel(app: &AppHandle, cursor: PhysicalPosition<f64>) {
     let Some(panel) = app.get_webview_window("panel") else { return };
     if panel.is_visible().unwrap_or(false) {
@@ -115,11 +122,14 @@ fn toggle_panel(app: &AppHandle, cursor: PhysicalPosition<f64>) {
     let scale = monitor.scale_factor();
     let area = monitor.work_area();
     let (left, top) = (area.position.x as f64, area.position.y as f64);
-    let right = left + area.size.width as f64;
+    let (right, bottom) = (left + area.size.width as f64, top + area.size.height as f64);
     let width = PANEL_WIDTH * scale;
+    let height = panel.outer_size().map(|s| s.height as f64).unwrap_or(480.0 * scale);
     let gap = 6.0 * scale;
     let x = (cursor.x - width / 2.0).clamp(left + gap, right - width - gap);
-    let _ = panel.set_position(PhysicalPosition::new(x, top + gap));
+    // The menu bar is at the top; a Windows taskbar is usually at the bottom.
+    let y = if cursor.y > (top + bottom) / 2.0 { bottom - height - gap } else { top + gap };
+    let _ = panel.set_position(PhysicalPosition::new(x, y));
     *PANEL_SHOWN.lock().unwrap() = Some(Instant::now());
     let _ = panel.show();
     let _ = panel.set_focus();
@@ -134,11 +144,16 @@ pub fn panel_lost_focus(panel: &tauri::Window) {
     }
 }
 
-/// Shows the total download speed next to the menu bar icon.
+/// Shows the total download speed next to the menu bar icon, or in the tray
+/// icon's tooltip on Windows, where icons can't have text.
 pub fn set_speed(app: &AppHandle, bytes_per_sec: f64) {
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
-        let title = (bytes_per_sec >= 1.0).then(|| format!("{}/s", human_bytes(bytes_per_sec)));
-        let _ = tray.set_title(title);
+        let speed = (bytes_per_sec >= 1.0).then(|| format!("{}/s", human_bytes(bytes_per_sec)));
+        if cfg!(target_os = "macos") {
+            let _ = tray.set_title(speed);
+        } else {
+            let _ = tray.set_tooltip(Some(speed.map_or("Flash".into(), |s| format!("Flash · {s}"))));
+        }
     }
 }
 

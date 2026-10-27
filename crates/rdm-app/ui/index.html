@@ -25,6 +25,12 @@
     <button id="btn-add" class="solid slim" title="Add download  ⌘N">
       <svg viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9"/></svg> Add
     </button>
+    <!-- Windows draws no title bar of its own here, so Flash has its own buttons. -->
+    <div class="win-controls">
+      <button type="button" id="win-min" aria-label="Minimize"><svg viewBox="0 0 10 10"><path d="M0 5.5h10"/></svg></button>
+      <button type="button" id="win-max" aria-label="Maximize"><svg viewBox="0 0 10 10"><rect x="0.5" y="0.5" width="9" height="9"/></svg></button>
+      <button type="button" id="win-close" class="close" aria-label="Close"><svg viewBox="0 0 10 10"><path d="M0.5 0.5l9 9M9.5 0.5l-9 9"/></svg></button>
+    </div>
   </header>
 
   <div class="body">
@@ -298,13 +304,13 @@
         </div>
         <div class="grid three">
           <label class="field"><span>Background speed</span><input id="s-bglimit" type="text" placeholder="1M" spellcheck="false"></label>
-          <p class="hint span2 bg-hint">The “Background” profile in the menu bar caps all downloads at this speed.</p>
+          <p class="hint span2 bg-hint">The “Background” profile in the <span data-win="tray">menu bar</span> caps all downloads at this speed.</p>
         </div>
         <label class="check"><input type="checkbox" id="s-notify"> Notify when downloads finish</label>
         <label class="check"><input type="checkbox" id="s-clipboard"> Offer to download links I copy</label>
-        <label class="check"><input type="checkbox" id="s-awake"> Keep the Mac awake while downloading</label>
+        <label class="check"><input type="checkbox" id="s-awake"> Keep the computer awake while downloading</label>
         <label class="check"><input type="checkbox" id="s-retry"> Retry automatically after network drops</label>
-        <label class="check"><input type="checkbox" id="s-login"> Open at login, in the menu bar</label>
+        <label class="check"><input type="checkbox" id="s-login"> Open at login, <span data-win="in the tray">in the menu bar</span></label>
         <div class="grid">
           <label class="field">
             <span>Video quality</span>
@@ -371,6 +377,7 @@
     </form>
   </dialog>
 
+  <script src="platform.js"></script>
   <script src="theme.js"></script>
   <script src="app.js"></script>
 </body>

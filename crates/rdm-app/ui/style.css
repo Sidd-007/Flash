@@ -18,8 +18,8 @@
   --cell-active: rgba(10, 10, 10, 0.4);
   --danger: #d4362c;
   --shadow: 0 1px 0 rgba(0, 0, 0, 0.02), 0 24px 64px -12px rgba(0, 0, 0, 0.22);
-  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Helvetica Neue", sans-serif;
-  --mono: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", "Inter", "Helvetica Neue", sans-serif;
+  --mono: "SF Mono", ui-monospace, "Cascadia Mono", "Cascadia Code", Consolas, "JetBrains Mono", Menlo, monospace;
   /* Progress and charts; the theme's primary colour when one is set. */
   --accent: var(--text);
   color-scheme: light dark;
@@ -176,6 +176,17 @@ input[type=checkbox]:checked::after {
 .titlebar button.slim { height: 24px; padding: 0 10px 0 8px; gap: 5px; font-size: 12.5px; border-radius: 7px; margin-left: 4px; }
 .titlebar button.slim svg { width: 13px; height: 13px; stroke-width: 1.8; }
 .titlebar .spacer { flex: 1; height: 100%; }
+
+/* Windows: no traffic lights to make room for, and Flash's own window buttons. */
+.win-controls { display: none; }
+[data-platform="windows"] .traffic { width: 14px; }
+[data-platform="windows"] .titlebar { padding-right: 0; }
+[data-platform="windows"] .titlebar button.slim { margin-right: 6px; }
+[data-platform="windows"] .win-controls { display: flex; align-self: stretch; }
+.win-controls button { width: 46px; height: 100%; padding: 0; justify-content: center; border: 0; border-radius: 0; color: var(--muted); }
+.win-controls button:hover { background: var(--hover); color: var(--text); }
+.win-controls button.close:hover { background: #c42b1c; color: #fff; }
+.win-controls svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1; }
 
 .body { flex: 1; display: flex; min-height: 0; }
 

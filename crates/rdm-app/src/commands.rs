@@ -1,16 +1,17 @@
 //! Commands the UI calls through `invoke`.
 
-use std::io::Write;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
 use std::sync::Arc;
 
 use rdm_manager::{AddRequest, DownloadView, Duplicate, Manager, SegmentView, Settings, Stats};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
+use tauri_plugin_autostart::ManagerExt as _;
+use tauri_plugin_clipboard_manager::ClipboardExt;
+use tauri_plugin_dialog::DialogExt;
 
-use crate::bridge;
+use crate::{bridge, os};
 use crate::profile::{self, Profile};
 
 type Res<T> = Result<T, String>;
@@ -144,9 +145,7 @@ fn download_path(m: &Manager, id: i64) -> Res<PathBuf> {
 
 #[tauri::command(rename_all = "snake_case")]
 pub fn open_download(m: State<Manager>, id: i64) -> Res<()> {
-    let path = download_path(&m, id)?;
-    Command::new("open").arg(path).status().map_err(err)?;
-    Ok(())
+    os::open_path(&download_path(&m, id)?).map_err(err)
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -158,100 +157,56 @@ pub fn reveal_download(m: State<Manager>, id: i64) -> Res<()> {
         .into_iter()
         .find(|p| p.exists());
     match target {
-        Some(p) => Command::new("open").arg("-R").arg(p).status(),
-        None => Command::new("open").arg(d.download.dir).status(),
+        Some(p) => os::reveal_path(&p),
+        None => os::reveal_path(&d.download.dir),
     }
-    .map_err(err)?;
-    Ok(())
+    .map_err(err)
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn clipboard_text() -> Res<String> {
-    let out = Command::new("pbpaste").output().map_err(err)?;
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+pub fn clipboard_text(app: AppHandle) -> Res<String> {
+    // An empty or non-text clipboard isn't an error worth showing.
+    Ok(app.clipboard().read_text().unwrap_or_default())
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn copy_text(text: String) -> Res<()> {
+pub fn copy_text(app: AppHandle, text: String) -> Res<()> {
     crate::clipboard::note_own_copy(&text);
-    let mut child = Command::new("pbcopy").stdin(Stdio::piped()).spawn().map_err(err)?;
-    child.stdin.take().ok_or("no stdin")?.write_all(text.as_bytes()).map_err(err)?;
-    child.wait().map_err(err)?;
-    Ok(())
+    app.clipboard().write_text(text).map_err(err)
 }
 
 /// Native folder picker. `None` when cancelled.
 #[tauri::command(rename_all = "snake_case")]
-pub async fn choose_folder(start: Option<String>) -> Res<Option<String>> {
-    pick_folder(start).await
+pub async fn choose_folder(app: AppHandle, start: Option<String>) -> Res<Option<String>> {
+    pick_folder(app, start).await
 }
 
-/// Shows the macOS folder picker, opening at `start` if it exists.
-/// The path goes in as an argument, never spliced into the script.
-pub async fn pick_folder(start: Option<String>) -> Res<Option<String>> {
+/// Shows the system folder picker, opening at `start` if it exists.
+pub async fn pick_folder(app: AppHandle, start: Option<String>) -> Res<Option<String>> {
     tokio::task::spawn_blocking(move || {
-        let start = start.filter(|s| std::path::Path::new(s).is_dir());
-        let mut cmd = Command::new("osascript");
-        match &start {
-            Some(dir) => cmd.args([
-                "-e",
-                "on run argv",
-                "-e",
-                r#"POSIX path of (choose folder with prompt "Save downloads to" default location (POSIX file (item 1 of argv)))"#,
-                "-e",
-                "end run",
-                dir,
-            ]),
-            None => cmd.args(["-e", r#"POSIX path of (choose folder with prompt "Save downloads to")"#]),
-        };
-        let out = cmd.output().map_err(err)?;
-        let path = String::from_utf8_lossy(&out.stdout).trim().trim_end_matches('/').to_owned();
-        Ok((out.status.success() && !path.is_empty()).then_some(path))
+        let mut dialog = app.dialog().file().set_title("Save downloads to");
+        if let Some(dir) = start.filter(|s| std::path::Path::new(s).is_dir()) {
+            dialog = dialog.set_directory(dir);
+        }
+        match dialog.blocking_pick_folder() {
+            Some(path) => path.into_path().map(|p| Some(p.display().to_string())).map_err(err),
+            None => Ok(None),
+        }
     })
     .await
     .map_err(err)?
 }
 
-const LAUNCH_AGENT: &str = "com.siddhant.rdm";
-
-fn launch_agent_path() -> Res<PathBuf> {
-    let home = std::env::var_os("HOME").ok_or("HOME is not set")?;
-    Ok(PathBuf::from(home).join("Library/LaunchAgents").join(format!("{LAUNCH_AGENT}.plist")))
+#[tauri::command(rename_all = "snake_case")]
+pub fn get_autostart(app: AppHandle) -> Res<bool> {
+    app.autolaunch().is_enabled().map_err(err)
 }
 
+/// Starts Flash hidden in the menu bar or tray at login.
 #[tauri::command(rename_all = "snake_case")]
-pub fn get_autostart() -> Res<bool> {
-    Ok(launch_agent_path()?.exists())
-}
-
-/// Starts Flash hidden in the menu bar at login, via a LaunchAgent.
-#[tauri::command(rename_all = "snake_case")]
-pub fn set_autostart(enabled: bool) -> Res<()> {
-    let path = launch_agent_path()?;
-    if !enabled {
-        return match std::fs::remove_file(&path) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(err(e)),
-            _ => Ok(()),
-        };
-    }
-    let exe = std::env::current_exe().map_err(err)?;
-    let exe = exe.to_string_lossy().replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
-    let plist = format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key><string>{LAUNCH_AGENT}</string>
-    <key>ProgramArguments</key><array><string>{exe}</string><string>--hidden</string></array>
-    <key>RunAtLoad</key><true/>
-</dict>
-</plist>
-"#
-    );
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(err)?;
-    }
-    std::fs::write(&path, plist).map_err(err)
+pub fn set_autostart(app: AppHandle, enabled: bool) -> Res<()> {
+    let launcher = app.autolaunch();
+    if enabled { launcher.enable() } else { launcher.disable() }.map_err(err)
 }
 
 #[derive(Serialize)]

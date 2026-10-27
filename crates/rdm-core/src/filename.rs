@@ -2,7 +2,7 @@ use percent_encoding::percent_decode_str;
 use url::Url;
 
 /// Longest name we produce, leaving room for the `.rdm.json` suffix within
-/// the 255-byte macOS limit.
+/// the 255-byte limit of macOS and Windows.
 const MAX_NAME_BYTES: usize = 200;
 
 /// Extracts a filename from a `Content-Disposition` header value, preferring
@@ -37,18 +37,20 @@ pub(crate) fn from_url(url: &Url) -> Option<String> {
     Some(percent_decode_str(last).decode_utf8_lossy().into_owned())
 }
 
-/// Makes a server-supplied name safe to use as a single path component.
+/// Makes a server-supplied name safe to use as a single path component, on
+/// macOS and Windows alike.
 pub(crate) fn sanitize(name: &str) -> String {
     let replaced: String = name
         .chars()
         .map(|c| match c {
-            '/' | '\\' | ':' => '_',
+            '/' | '\\' | ':' | '<' | '>' | '"' | '|' | '?' | '*' => '_',
             c if c.is_control() => '_',
             c => c,
         })
         .collect();
-    // Leading dots would make the file hidden (or be "..").
-    let trimmed = replaced.trim().trim_start_matches('.').trim();
+    // Leading dots would make the file hidden (or be ".."); Windows drops
+    // trailing dots and spaces.
+    let trimmed = replaced.trim().trim_start_matches('.').trim_end_matches(['.', ' ']).trim();
 
     let mut out = String::new();
     for c in trimmed.chars() {
@@ -57,7 +59,14 @@ pub(crate) fn sanitize(name: &str) -> String {
         }
         out.push(c);
     }
-    if out.is_empty() { "download".into() } else { out }
+    if out.is_empty() {
+        return "download".into();
+    }
+    // Windows reserves device names, with or without an extension.
+    let stem = out.split('.').next().unwrap_or("").to_ascii_uppercase();
+    let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (stem.len() == 4 && (stem.starts_with("COM") || stem.starts_with("LPT")) && stem.as_bytes()[3].is_ascii_digit());
+    if reserved { format!("_{out}") } else { out }
 }
 
 /// `report.pdf` -> `report (2).pdf`
@@ -106,6 +115,11 @@ mod tests {
         assert_eq!(sanitize("a/b:c"), "a_b_c");
         assert_eq!(sanitize("  "), "download");
         assert_eq!(sanitize(".hidden"), "hidden");
+        assert_eq!(sanitize(r#"What? "Live" <4K>|*.mp4"#), "What_ _Live_ _4K___.mp4");
+        assert_eq!(sanitize("notes. . "), "notes");
+        assert_eq!(sanitize("con.txt"), "_con.txt");
+        assert_eq!(sanitize("COM1"), "_COM1");
+        assert_eq!(sanitize("console.log"), "console.log");
         assert!(sanitize(&"é".repeat(300)).len() <= MAX_NAME_BYTES);
     }
 

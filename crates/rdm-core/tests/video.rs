@@ -1,4 +1,6 @@
 //! Video downloads end to end, against a stand-in yt-dlp script.
+// The stand-in is a shell script, so these run on macOS and Linux only.
+#![cfg(unix)]
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};

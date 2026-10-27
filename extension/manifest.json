@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Flash Download Manager",
   "version": "0.1.0",
-  "description": "Send downloads and HLS video streams to Flash, the download manager on your Mac.",
+  "description": "Send downloads and HLS video streams to Flash, the download manager on your computer.",
   "permissions": [
     "downloads",
     "contextMenus",
