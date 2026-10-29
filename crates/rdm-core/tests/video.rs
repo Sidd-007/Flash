@@ -31,7 +31,11 @@ done
 case "$url" in *broken*) echo "ERROR: [youtube] abc: Video unavailable" >&2; exit 1;; esac
 for a in "$@"; do
   if [ "$a" = "-J" ]; then
-    echo '{"id":"abc","title":"My: Clip","ext":"webm","filesize_approx":3000}'
+    case "$url" in
+      *scanned*) echo '{"_type":"playlist","extractor_key":"Generic","title":"Page","entries":[{"id":"p1","title":"Main player","ext":"mp4","filesize":2000},{"id":"p2","title":"Sidebar","ext":"mp4"}]}' ;;
+      *list*) echo '{"_type":"playlist","extractor_key":"YoutubeTab","title":"Mix","entries":[{"id":"a","title":"A"}]}' ;;
+      *) echo '{"id":"abc","title":"My: Clip","ext":"webm","filesize_approx":3000}' ;;
+    esac
     exit 0
   fi
 done
@@ -133,4 +137,23 @@ async fn cookies_reach_ytdlp_only_through_a_private_scoped_file() {
         assert!(!Path::new(path).exists(), "{path} was left behind");
         assert!(!Path::new(path).parent().unwrap().exists());
     }
+}
+
+#[tokio::test]
+async fn a_scanned_page_downloads_its_first_video_but_real_playlists_are_refused() {
+    let tools = tempfile::tempdir().unwrap();
+    let out = tempfile::tempdir().unwrap();
+    let job = VideoJob::prepare(request("https://news.example/scanned-story", out.path(), fake_ytdlp(tools.path()))).await.unwrap();
+    assert!(job.info().file_name.starts_with("Main player."), "{}", job.info().file_name);
+    assert_eq!(job.info().total, Some(2000));
+    assert!(matches!(job.run(CancellationToken::new()).await.unwrap(), Outcome::Completed(_)));
+    let log = std::fs::read_to_string(tools.path().join("calls.log")).unwrap();
+    let download = log.lines().filter(|l| l.starts_with("ARGS ")).nth(1).unwrap();
+    assert!(download.contains("--playlist-items 1"), "{download}");
+
+    let err = VideoJob::prepare(request("https://www.youtube.com/playlist?list=PL1", out.path(), fake_ytdlp(tools.path())))
+        .await
+        .err()
+        .expect("a real playlist is refused");
+    assert!(format!("{err:#}").contains("playlist"), "{err:#}");
 }

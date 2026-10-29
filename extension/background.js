@@ -1,5 +1,5 @@
 // Chrome loads this as a service worker; Firefox as a background script.
-if (typeof importScripts === 'function') importScripts('common.js');
+if (typeof importScripts === 'function') importScripts('common.js', 'media.js');
 
 // ---------- taking over browser downloads ----------
 
@@ -84,7 +84,7 @@ async function takeOver(item, release) {
  * browser's own Save As sheet. Pages extensions can't touch (chrome://, the
  * Web Store, PDFs) get a small window instead.
  */
-async function openDialog(request, info) {
+async function openDialog(request, info, tabId = null) {
   const id = crypto.randomUUID();
   await storage.set({ [`pending:${id}`]: {
     ...request,
@@ -94,7 +94,9 @@ async function openDialog(request, info) {
     has_ytdlp: info?.has_ytdlp ?? true,
   } });
   try {
-    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    const tab = tabId != null
+      ? await chrome.tabs.get(tabId)
+      : (await chrome.tabs.query({ active: true, lastFocusedWindow: true }))[0];
     if (tab?.id != null && /^https?:/i.test(tab.url || '')) {
       await chrome.scripting.executeScript({
         target: { tabId: tab.id },
@@ -230,14 +232,64 @@ chrome.runtime.onInstalled.addListener(() => {
 async function offerPageVideo(url, title) {
   try {
     const rdm = await pingRdm();
-    await openDialog({ url, referrer: null, file_name: title || null, size: null, mime: null, kind: 'video' }, rdm);
+    await openDialog({ url: videoPageUrl(url) || url, referrer: null, file_name: title || null, size: null, mime: null, kind: 'video' }, rdm);
   } catch (e) {
     notify('Could not send to Flash', e.message);
   }
 }
 
-chrome.runtime.onMessage.addListener((msg) => {
+/** The request the dialog starts from, for one way of downloading. */
+function videoRequest(choice, tab, title, choices) {
+  const ext = choice.kind === 'file' ? (choice.url.split(/[?#]/)[0].match(/\.([a-z0-9]{2,4})$/i) || [])[1] : null;
+  return {
+    url: choice.url,
+    kind: choice.kind,
+    referrer: tab.url,
+    // yt-dlp and the stream downloader add the extension themselves.
+    file_name: title ? (ext ? `${title}.${ext.toLowerCase()}` : title) : null,
+    size: choice.size || null,
+    mime: null,
+    title,
+    choices,
+  };
+}
+
+/** What is known about HLS playlists: master or single quality, tallest quality. */
+async function describeHls(urls) {
+  const entries = await Promise.all(urls.map(async (url) => {
+    try {
+      const res = await fetch(url, { credentials: 'include', signal: AbortSignal.timeout(2500) });
+      return res.ok ? [url, readHlsPlaylist(await res.text())] : null;
+    } catch { return null; }
+  }));
+  return Object.fromEntries(entries.filter(Boolean));
+}
+
+/**
+ * The download button on a player was clicked: works out the ways to get
+ * what it shows (see media.js) and opens the dialog in that tab.
+ */
+async function offerPlayerVideo(tab, frameId, frameUrl, src) {
+  let rdm;
+  try {
+    rdm = await pingRdm();
+  } catch (e) {
+    notify('Could not reach Flash', e.message);
+    return;
+  }
+  const key = streamsKey(tab.id);
+  const media = (await storage.get(key))[key] || [];
+  const hls = await describeHls(media.filter((m) => m.kind === 'hls').slice(-6).map((m) => m.url));
+  const choices = videoChoices({ frameUrl, pageUrl: tab.url, frameId, src, media, hls });
+  await openDialog(videoRequest(choices[0], tab, cleanTitle(tab.title), choices), rdm, tab.id);
+}
+
+chrome.runtime.onMessage.addListener((msg, sender) => {
   if (msg?.type === 'rdm-page-video' && typeof msg.url === 'string') offerPageVideo(msg.url, msg.title);
+  if (msg?.type === 'rdm-video' && sender.tab?.id != null) {
+    const src = typeof msg.src === 'string' ? msg.src : '';
+    offerPlayerVideo(sender.tab, sender.frameId ?? 0, sender.url || sender.tab.url, src);
+  }
 });
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
@@ -263,35 +315,42 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   }
 });
 
-// ---------- HLS stream detection ----------
+// ---------- media detection ----------
 
 const streamsKey = (tabId) => `streams:${tabId}`;
 
-async function rememberStream(tabId, url) {
+/** Per tab, so concurrent responses can't overwrite each other's entries. */
+const tabQueues = new Map();
+
+function inTabQueue(tabId, fn) {
+  const next = (tabQueues.get(tabId) || Promise.resolve()).then(fn, fn);
+  tabQueues.set(tabId, next);
+  return next;
+}
+
+/** Records media a tab loaded (see classifyResponse), newest last. */
+function rememberMedia(tabId, frameId, media) {
   if (tabId < 0) return;
-  const key = streamsKey(tabId);
-  const list = (await storage.get(key))[key] || [];
-  if (list.some((s) => s.url === url)) return;
-  list.push({ url, at: Date.now() });
-  await storage.set({ [key]: list.slice(-30) });
-  chrome.action.setBadgeText({ tabId, text: String(Math.min(list.length, 99)) });
-  chrome.action.setBadgeBackgroundColor({ tabId, color: '#0a64e0' });
+  inTabQueue(tabId, async () => {
+    const key = streamsKey(tabId);
+    const list = ((await storage.get(key))[key] || []).filter((m) => m.url !== media.url);
+    list.push({ ...media, frameId, at: Date.now() });
+    await storage.set({ [key]: list.slice(-30) });
+    chrome.action.setBadgeText({ tabId, text: String(Math.min(list.length, 99)) });
+    chrome.action.setBadgeBackgroundColor({ tabId, color: '#0a64e0' });
+  });
 }
 
 async function forgetStreams(tabId) {
-  await storage.remove(streamsKey(tabId));
+  await inTabQueue(tabId, () => storage.remove(streamsKey(tabId)));
   chrome.action.setBadgeText({ tabId, text: '' }).catch(() => {});
 }
 
-chrome.webRequest.onBeforeRequest.addListener(
-  (d) => { if (/\.m3u8(\?|#|$)/i.test(d.url)) rememberStream(d.tabId, d.url); },
-  { urls: ['<all_urls>'] },
-);
-
-chrome.webRequest.onHeadersReceived.addListener(
+// Started rather than received, so cached responses count too.
+chrome.webRequest.onResponseStarted.addListener(
   (d) => {
-    const type = d.responseHeaders?.find((h) => h.name.toLowerCase() === 'content-type')?.value || '';
-    if (/mpegurl/i.test(type)) rememberStream(d.tabId, d.url);
+    const media = classifyResponse(d);
+    if (media) rememberMedia(d.tabId, d.frameId, media);
   },
   { urls: ['<all_urls>'] },
   ['responseHeaders'],

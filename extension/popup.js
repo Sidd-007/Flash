@@ -34,6 +34,7 @@ async function main() {
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab) return;
+  showSiteToggle(tab, s);
   if (isVideoSite(tab.url || '')) {
     $('#page-video').hidden = false;
     $('#page-video').onclick = () => {
@@ -45,12 +46,12 @@ async function main() {
   const streams = (await storage.get(key))[key] || [];
   $('#no-streams').hidden = streams.length > 0;
 
-  $('#streams').replaceChildren(...streams.map((stream, i) => {
+  $('#streams').replaceChildren(...streams.map((stream) => {
     const li = document.createElement('li');
     const label = document.createElement('span');
     label.className = 'stream';
     const strong = document.createElement('b');
-    strong.textContent = i === 0 ? 'first · ' : '';
+    strong.textContent = `${(stream.kind || 'hls').toUpperCase()} · `;
     label.append(strong, streamLabel(stream.url));
     label.title = stream.url;
     const btn = document.createElement('button');
@@ -59,7 +60,9 @@ async function main() {
     btn.onclick = async () => {
       btn.disabled = true;
       try {
-        await sendToRdm(stream.url, { kind: 'hls', referrer: tab.url, file_name: safeName(tab.title) });
+        // DASH goes through yt-dlp; HLS through Flash's stream downloader.
+        const kind = stream.kind === 'dash' ? 'video' : stream.kind || 'hls';
+        await sendToRdm(stream.url, { kind, referrer: tab.url, file_name: kind === 'file' ? null : safeName(tab.title) });
         btn.textContent = 'Sent';
       } catch (e) {
         btn.textContent = 'Retry';
@@ -70,6 +73,23 @@ async function main() {
     li.append(label, btn);
     return li;
   }));
+}
+
+/** Turns the video button off (or back on) for the current site. */
+function showSiteToggle(tab, s) {
+  let site;
+  try { site = new URL(tab.url).hostname.replace(/^www\./, ''); } catch { return; }
+  if (!/^https?:/.test(tab.url) || !s.videoButton) return;
+  const list = s.videoButtonExclude.split(/[\s,]+/).filter(Boolean);
+  const excluded = list.some((h) => h.replace(/^www\./, '') === site);
+  $('#site-button-row').hidden = false;
+  $('#site-button-label').textContent = `Video button on ${site}`;
+  $('#site-button').checked = !excluded;
+  $('#site-button').onchange = (e) => {
+    const rest = list.filter((h) => h.replace(/^www\./, '') !== site);
+    const next = e.target.checked ? rest : [...rest, site];
+    chrome.storage.sync.set({ videoButtonExclude: next.join(' ') });
+  };
 }
 
 main();

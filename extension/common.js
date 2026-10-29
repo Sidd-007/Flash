@@ -13,6 +13,8 @@ const DEFAULTS = {
   askInBrowser: true,
   // Show a Download button on YouTube's player.
   videoButton: true,
+  // Sites (hosts) where it doesn't show, separated by spaces or commas.
+  videoButtonExclude: '',
 };
 
 /** Sites Flash downloads through yt-dlp (kept in sync with the app). */

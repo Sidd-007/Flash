@@ -19,6 +19,7 @@ function read() {
     captureAll: $('#captureAll').checked,
     askInBrowser: $('#askInBrowser').checked,
     videoButton: $('#videoButton').checked,
+    videoButtonExclude: $('#videoButtonExclude').value.trim(),
     extensions: $('#extensions').value.trim(),
     minSizeMB: Math.max(0, Number($('#minSizeMB').value) || 0),
   };
@@ -39,6 +40,7 @@ async function main() {
   $('#captureAll').checked = s.captureAll;
   $('#askInBrowser').checked = s.askInBrowser;
   $('#videoButton').checked = s.videoButton;
+  $('#videoButtonExclude').value = s.videoButtonExclude;
   $('#extensions').value = s.extensions;
   $('#minSizeMB').value = s.minSizeMB;
 

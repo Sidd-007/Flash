@@ -176,31 +176,66 @@ async function downloadInBrowser() {
   await finish();
 }
 
+/** The name for a source: the page title plus the file's extension, if any. */
+function nameFor(choice) {
+  const ext = choice.kind === 'file' ? (choice.url.split(/[?#]/)[0].match(/\.([a-z0-9]{2,4})$/i) || [])[1] : null;
+  if (!request.title) return choice.kind === 'file' ? nameFromUrl(choice.url) : '';
+  return ext ? `${request.title}.${ext.toLowerCase()}` : request.title;
+}
+
+/**
+ * Shows one way of downloading: yt-dlp ("video"), a stream ("hls") or a
+ * file. Returns whether the name has an extension worth keeping selected.
+ */
+function showSource(choice, name) {
+  Object.assign(request, { url: choice.url, kind: choice.kind, size: choice.size || null });
+  const video = choice.kind === 'video';
+  const stream = choice.kind === 'video' || choice.kind === 'hls';
+  $('#name').value = name;
+  const ext = (name.match(/\.([a-z0-9]{1,4})$/i) || [])[1];
+  $('#ext').textContent = stream ? 'VID' : ext ? ext.toUpperCase() : 'FILE';
+  for (const el of document.querySelectorAll('.video-only')) el.hidden = !video;
+  $('#name').placeholder = stream ? 'the video title' : '';
+  document.querySelector('.sheet-title').textContent = stream || request.choices ? 'Download video with Flash' : 'Download with Flash';
+  // Plain links can fall back to the browser; pages and streams can't.
+  $('#browser').hidden = stream;
+  $('#error').hidden = true;
+  if (video && !request.has_ytdlp) {
+    showError(`Flash needs yt-dlp for this. Install it with: ${isWindowsPath(request.home) ? 'winget install yt-dlp.yt-dlp' : 'brew install yt-dlp'}`);
+  }
+  let host = '';
+  try { host = new URL(choice.url).host; } catch { /* keep empty */ }
+  const how = video ? 'via yt-dlp' : choice.kind === 'hls' ? 'HLS stream' : 'size unknown';
+  $('#meta').textContent = [request.size ? fmtBytes(request.size) : how, host].filter(Boolean).join('  ·  ');
+  $('#meta').title = choice.url;
+  tellHeight();
+  return !stream && !!ext;
+}
+
 async function main() {
   if (embedded) document.body.classList.add('embedded');
   request = (await storage.get(key))[key];
   if (!request) { finish(); return; }
 
-  const video = request.kind === 'video';
-  const name = request.file_name || (video ? '' : nameFromUrl(request.url));
-  $('#name').value = name;
-  const ext = (name.match(/\.([a-z0-9]{1,4})$/i) || [])[1];
-  $('#ext').textContent = video ? 'VID' : ext ? ext.toUpperCase() : 'FILE';
-  if (video) {
-    for (const el of document.querySelectorAll('.video-only')) el.hidden = false;
-    $('#quality').value = request.video_quality || 'best';
-    $('#name').placeholder = 'the video title';
-    document.querySelector('.sheet-title').textContent = 'Download video with Flash';
-    // Plain links can fall back to Chrome; video pages can't.
-    $('#browser').hidden = true;
-    if (!request.has_ytdlp) {
-      showError(`Flash needs yt-dlp for video sites. Install it with: ${isWindowsPath(request.home) ? 'winget install yt-dlp.yt-dlp' : 'brew install yt-dlp'}`);
-    }
+  const name = request.file_name || (request.kind === 'video' ? '' : nameFromUrl(request.url));
+  let keepExt = showSource({ url: request.url, kind: request.kind || 'file', size: request.size }, name);
+  $('#quality').value = request.video_quality || 'best';
+  const video = request.kind === 'video' || request.kind === 'hls';
+  const ext = keepExt ? (name.match(/\.([a-z0-9]{1,4})$/i) || [])[1] : null;
+  // A player can offer several sources; the best comes first.
+  if (request.choices?.length > 1) {
+    for (const el of document.querySelectorAll('.source-only')) el.hidden = false;
+    $('#source').replaceChildren(...request.choices.map((c, i) => {
+      const o = document.createElement('option');
+      o.value = String(i);
+      o.textContent = c.label;
+      return o;
+    }));
+    $('#source').onchange = () => {
+      const choice = request.choices[Number($('#source').value)];
+      keepExt = showSource(choice, nameFor(choice));
+    };
   }
-  let host = '';
-  try { host = new URL(request.url).host; } catch { /* keep empty */ }
-  $('#meta').textContent = [request.size ? fmtBytes(request.size) : video ? 'via yt-dlp' : 'size unknown', host].filter(Boolean).join('  ·  ');
-  $('#meta').title = request.url;
   const last = (await chrome.storage.local.get(LAST_KEY))[LAST_KEY];
   await fillFolders(last || '');
   $('#dir').onchange = () => { $('#dir').title = $('#dir').value || request.download_dir || ''; };
@@ -217,7 +252,7 @@ async function main() {
   // unless the user has already clicked into something.
   const focusFirst = () => {
     if (document.activeElement && document.activeElement !== document.body) return;
-    if (name) selectStem($('#name'), !video && !!ext);
+    if (name) selectStem($('#name'), !video && !!ext && keepExt);
     else $('#ok').focus();
   };
   // Chrome ignores focus() in a frame from another origin until the page has

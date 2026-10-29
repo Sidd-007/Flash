@@ -117,6 +117,8 @@ pub struct VideoJob {
     req: VideoRequest,
     ytdlp: PathBuf,
     ffmpeg: Option<PathBuf>,
+    /// The page held several videos; only the first is downloaded.
+    first_only: bool,
     stem: String,
     info: JobInfo,
     progress: Arc<Progress>,
@@ -148,10 +150,21 @@ impl VideoJob {
         if !out.status.success() {
             bail!("yt-dlp couldn't read this page: {}", last_lines(&out.stderr));
         }
-        let meta: serde_json::Value =
+        let mut meta: serde_json::Value =
             serde_json::from_slice(&out.stdout).context("yt-dlp returned details Flash couldn't read")?;
+        // A page yt-dlp scanned for players (its generic extractor) can list
+        // every video on it; the first is normally the main one. Playlists
+        // that a site itself knows about are left for the user to split.
+        let mut first_only = false;
         if meta.get("_type").and_then(|t| t.as_str()) == Some("playlist") {
-            bail!("this is a playlist; add the individual videos instead");
+            let generic = meta["extractor_key"].as_str() == Some("Generic");
+            match meta["entries"].as_array().and_then(|e| e.first()).cloned() {
+                Some(first) if generic => {
+                    meta = first;
+                    first_only = true;
+                }
+                _ => bail!("this is a playlist; add the individual videos instead"),
+            }
         }
 
         let title = meta["title"].as_str().or(meta["id"].as_str()).unwrap_or("video");
@@ -175,6 +188,7 @@ impl VideoJob {
             req,
             ytdlp,
             ffmpeg,
+            first_only,
             stem,
             progress,
         })
@@ -208,6 +222,9 @@ impl VideoJob {
             if self.req.quality.as_deref() != Some("audio") {
                 cmd.args(["--merge-output-format", "mp4"]);
             }
+        }
+        if self.first_only {
+            cmd.args(["--playlist-items", "1"]);
         }
         if self.req.rate_limit > 0 {
             cmd.args(["--limit-rate", &self.req.rate_limit.to_string()]);

@@ -4,8 +4,8 @@ A fast download manager for macOS and Windows, written in Rust.
 
 - Splits each file across parallel connections, and resumes after a pause, crash or network drop
 - Queue, scheduler, speed limits and a menu bar (or tray) panel
-- Browser extension that sends downloads to Flash, including YouTube videos
-- Videos from YouTube and similar sites through `yt-dlp`, and HLS streams (`.m3u8`)
+- Browser extension that sends downloads to Flash, with a **Download** button on video players on any site
+- Videos from YouTube and ~1,800 other sites through `yt-dlp`, plus HLS (`.m3u8`) and DASH (`.mpd`) streams
 
 ## Install on macOS
 
@@ -58,6 +58,8 @@ winget install Gyan.FFmpeg
 1. In Flash, open **Settings → Browser** and copy the pairing token.
 2. In Chrome or Edge, open `chrome://extensions` (or `edge://extensions`), turn on **Developer mode**, click **Load unpacked** and pick the `extension` folder.
 3. Paste the token in the extension's options.
+
+Hover over a video player on any site and click **Download**. Flash uses yt-dlp for sites it knows, and otherwise the file or stream the player loaded; when there are several, the dialog lets you pick. DRM-protected video (Netflix and the like) can't be downloaded. Turn the button off for a site from the extension's popup.
 
 The extension only talks to Flash on `127.0.0.1`, and only with the token.
 
