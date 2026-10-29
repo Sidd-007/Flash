@@ -246,8 +246,11 @@ main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .list-title { font-size: 14px; font-weight: 600; letter-spacing: -0.01em; display: flex; gap: 8px; align-items: baseline; }
 .list-title .count { font-size: 11px; font-weight: 400; color: var(--faint); }
 .list-actions { display: flex; gap: 2px; align-items: center; }
-.list-actions .divider { width: 1px; height: 14px; background: var(--line-strong); margin: 0 6px; }
-.list-actions kbd { font-size: 9.5px; padding: 1px 3px; }
+.list-actions .divider { width: 1px; height: 14px; background: var(--line); margin: 0 6px; }
+.sel-actions { display: flex; gap: 2px; align-items: center; }
+.sel-count { font-size: 11px; color: var(--faint); margin-right: 6px; }
+.list-actions button.icon { width: 28px; height: 26px; padding: 0; justify-content: center; border-radius: 7px; }
+.list-actions button.icon svg { width: 15px; height: 15px; stroke-width: 1.4; }
 
 .list-wrap { flex: 1; overflow-y: auto; position: relative; }
 .rows { list-style: none; margin: 0; padding: 6px 8px 16px; }

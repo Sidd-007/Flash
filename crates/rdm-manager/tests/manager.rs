@@ -327,3 +327,60 @@ async fn finds_duplicates_by_url_or_name_and_size() {
     std::fs::remove_file(dir.path().join("tool.dmg")).unwrap();
     assert!(m.duplicates(&url, None, None).unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn forgets_finished_files_deleted_outside_flash() {
+    let base = serve(data(64 * 1024), Duration::ZERO).await;
+    let dir = tempfile::tempdir().unwrap();
+    let m = manager(dir.path(), |_| {});
+    let kept = add(&m, format!("{base}/kept.bin"));
+    let deleted = add(&m, format!("{base}/deleted.bin"));
+    wait_for(&m, kept, Status::Completed).await;
+    wait_for(&m, deleted, Status::Completed).await;
+
+    std::fs::remove_file(dir.path().join("deleted.bin")).unwrap();
+    assert_eq!(m.forget_missing().unwrap(), vec![deleted]);
+    assert!(m.get(deleted).unwrap().is_none());
+    assert!(m.get(kept).unwrap().is_some());
+
+    // A whole folder gone (an unplugged drive) isn't treated as deleted.
+    let other = tempfile::tempdir().unwrap();
+    let id = m.add(AddRequest { urls: vec![format!("{base}/far.bin")], dir: Some(other.path().join("drive")), start: true, ..Default::default() }).unwrap()[0];
+    wait_for(&m, id, Status::Completed).await;
+    std::fs::remove_dir_all(other.path().join("drive")).unwrap();
+    assert!(m.forget_missing().unwrap().is_empty());
+    assert!(m.get(id).unwrap().is_some());
+}
+
+#[tokio::test]
+async fn clear_all_keeps_finished_files_and_drops_partial_data() {
+    let body = data(16 << 20);
+    let base = serve(body.clone(), Duration::from_millis(10)).await;
+    let dir = tempfile::tempdir().unwrap();
+    let m = manager(dir.path(), |s| s.max_active = 2);
+    let small = serve(data(64 * 1024), Duration::ZERO).await;
+    let done = add(&m, format!("{small}/done.bin"));
+    wait_for(&m, done, Status::Completed).await;
+    let paused = add(&m, format!("{base}/paused.iso"));
+    wait_for(&m, paused, Status::Running).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    m.pause(paused).unwrap();
+    wait_for(&m, paused, Status::Paused).await;
+    let running = add(&m, format!("{base}/running.iso"));
+    wait_for(&m, running, Status::Running).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    m.clear_all().unwrap();
+    for _ in 0..100 {
+        if m.list().unwrap().is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(m.list().unwrap().is_empty());
+    assert!(dir.path().join("done.bin").exists(), "finished files stay on disk");
+    for name in ["paused.iso", "running.iso"] {
+        assert!(!dir.path().join(format!("{name}.part")).exists(), "{name}.part is deleted");
+        assert!(!dir.path().join(format!("{name}.rdm.json")).exists());
+    }
+}

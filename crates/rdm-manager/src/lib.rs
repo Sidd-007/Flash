@@ -36,6 +36,8 @@ const FIRST_RETRY_WAIT: Duration = Duration::from_secs(10);
 const MAX_RETRY_WAIT: Duration = Duration::from_secs(300);
 /// Ticks between writes of live byte counts to the database.
 const PERSIST_EVERY: u32 = 10;
+/// How often to look for finished files that were deleted outside Flash.
+const SWEEP_EVERY: Duration = Duration::from_secs(10);
 
 /// What to add. Each URL may be a batch pattern like `file[01-20].zip`.
 #[derive(Debug, Clone, Default, serde::Deserialize)]
@@ -189,6 +191,7 @@ impl Manager {
         });
         tokio::spawn(pump(Arc::downgrade(&inner)));
         tokio::spawn(ticker(Arc::downgrade(&inner)));
+        tokio::spawn(sweeper(Arc::downgrade(&inner)));
         Ok(Self { inner })
     }
 
@@ -452,12 +455,35 @@ impl Manager {
         Ok(())
     }
 
+    /// Drops finished downloads whose file was deleted outside Flash, and
+    /// returns their ids. A file whose folder is gone too (an unplugged
+    /// drive, say) stays listed, since it may come back.
+    pub fn forget_missing(&self) -> Result<Vec<i64>> {
+        let gone: Vec<i64> = self.inner.db.lock().unwrap().list()?.into_iter()
+            .filter(|d| d.status == Status::Completed)
+            .filter(|d| d.path.as_ref().is_some_and(|p| !p.exists() && p.parent().is_some_and(Path::is_dir)))
+            .map(|d| d.id)
+            .collect();
+        for &id in &gone {
+            self.inner.db.lock().unwrap().delete(id)?;
+            let _ = self.inner.events.send(Event::Removed { id });
+        }
+        Ok(gone)
+    }
+
     /// Removes every completed download from the list (files are kept).
     pub fn clear_completed(&self) -> Result<()> {
         let ids: Vec<i64> = self.inner.db.lock().unwrap().list()?.iter()
             .filter(|d| d.status == Status::Completed)
             .map(|d| d.id)
             .collect();
+        ids.into_iter().try_for_each(|id| self.remove(id, false))
+    }
+
+    /// Empties the list. Unfinished downloads are stopped and their partial
+    /// data deleted; finished files stay on disk.
+    pub fn clear_all(&self) -> Result<()> {
+        let ids: Vec<i64> = self.inner.db.lock().unwrap().list()?.iter().map(|d| d.id).collect();
         ids.into_iter().try_for_each(|id| self.remove(id, false))
     }
 
@@ -839,6 +865,19 @@ fn delete_files(d: &Download, delete_final: bool) {
 }
 
 /// Publishes live speed and progress twice a second.
+/// Keeps the list in step with the disk: see [`Manager::forget_missing`].
+async fn sweeper(inner: std::sync::Weak<Inner>) {
+    loop {
+        {
+            let Some(strong) = inner.upgrade() else { return };
+            if let Err(e) = (Manager { inner: strong }).forget_missing() {
+                eprintln!("rdm: could not check for deleted files: {e:#}");
+            }
+        }
+        tokio::time::sleep(SWEEP_EVERY).await;
+    }
+}
+
 async fn ticker(inner: std::sync::Weak<Inner>) {
     let mut ticks = 0u32;
     let mut was_busy = false;

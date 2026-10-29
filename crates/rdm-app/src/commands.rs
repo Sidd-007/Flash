@@ -77,6 +77,11 @@ pub fn clear_completed(m: State<Manager>) -> Res<()> {
 }
 
 #[tauri::command(rename_all = "snake_case")]
+pub fn clear_all(m: State<Manager>) -> Res<()> {
+    m.clear_all().map_err(err)
+}
+
+#[tauri::command(rename_all = "snake_case")]
 pub fn set_speed_limit(m: State<Manager>, id: i64, limit: u64) -> Res<()> {
     m.set_speed_limit(id, limit).map_err(err)
 }

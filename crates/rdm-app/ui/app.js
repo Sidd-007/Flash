@@ -346,6 +346,8 @@ function selectedItems() {
 
 function renderToolbar() {
   const sel = selectedItems();
+  $('#sel-actions').classList.toggle('hidden', sel.length === 0);
+  $('#sel-count').textContent = sel.length > 1 ? `${sel.length} selected` : '';
   $('#btn-resume').disabled = !sel.some((d) => d.status === 'paused' || d.status === 'failed');
   $('#btn-pause').disabled = !sel.some((d) => d.status === 'running' || d.status === 'queued');
   $('#btn-delete').disabled = sel.length === 0;
@@ -425,6 +427,7 @@ function paletteCommands() {
     ['STA', 'Open stats', '6', () => openStats()],
     ['THM', 'Theme', '7', () => openTheme()],
     ['CLR', 'Clear finished from the list', '', () => invoke('clear_completed')],
+    ['CLR', 'Clear all downloads…', '', () => openClearAll()],
     ['SET', 'Settings', '⌘,', () => openSettings()],
     ['MAX', 'Speed: full', state.profile === 'full' ? '●' : '', () => invoke('set_profile', { profile: 'full' })],
     ['BG', `Speed: background (${fmtSpeed(s.background_limit || 0)})`, state.profile === 'background' ? '●' : '', () => invoke('set_profile', { profile: 'background' })],
@@ -1228,6 +1231,31 @@ function onRelinked({ id, ok, error }) {
   }
 }
 
+// ---------- clear all ----------
+
+/** Asks before emptying the list, saying what happens to which files. */
+function openClearAll() {
+  const all = [...state.items.values()];
+  if (!all.length) { toast('Nothing to clear.'); return; }
+  const unfinished = all.filter((d) => d.status !== 'completed').length;
+  const finished = all.length - unfinished;
+  $('#c-title').textContent = `Clear all ${all.length} download${all.length === 1 ? '' : 's'}?`;
+  const parts = [];
+  if (finished) parts.push(`${finished} finished file${finished === 1 ? ' stays' : 's stay'} on disk.`);
+  if (unfinished) parts.push(`${unfinished} unfinished download${unfinished === 1 ? ' is' : 's are'} stopped and ${unfinished === 1 ? 'its' : 'their'} partial data deleted.`);
+  $('#c-text').textContent = parts.join(' ');
+  $('#dlg-clear').showModal();
+}
+
+async function submitClearAll(e) {
+  e.preventDefault();
+  $('#dlg-clear').close();
+  try {
+    await invoke('clear_all');
+    state.selected.clear();
+  } catch (x) { toast(String(x)); }
+}
+
 // ---------- remove dialog ----------
 
 function openRemove() {
@@ -1424,8 +1452,19 @@ function bind() {
   $('#btn-resume').onclick = () => forSelected('resume', (d) => d.status === 'paused' || d.status === 'failed');
   $('#btn-pause').onclick = () => forSelected('pause', (d) => d.status === 'running' || d.status === 'queued');
   $('#btn-delete').onclick = openRemove;
-  $('#btn-resume-all').onclick = () => invoke('resume_all').catch((e) => toast(String(e)));
-  $('#btn-pause-all').onclick = () => invoke('pause_all').catch((e) => toast(String(e)));
+  $('#btn-more').onclick = (e) => {
+    e.stopPropagation();
+    const r = e.currentTarget.getBoundingClientRect();
+    showMenu(r.right - 190, r.bottom + 6, [
+      ['Resume all', () => invoke('resume_all').catch((x) => toast(String(x)))],
+      ['Pause all', () => invoke('pause_all').catch((x) => toast(String(x)))],
+      '-',
+      ['Clear finished', () => invoke('clear_completed').catch((x) => toast(String(x)))],
+      ['Clear all…', openClearAll, 'danger-item'],
+    ]);
+  };
+  $('#form-clear').onsubmit = submitClearAll;
+  $('#c-cancel').onclick = () => $('#dlg-clear').close();
   $('#btn-settings').onclick = openSettings;
   $('#btn-palette').onclick = openPalette;
   $('#types-toggle').onclick = () => {

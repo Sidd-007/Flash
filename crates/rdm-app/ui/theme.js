@@ -13,6 +13,18 @@ const THEME_PRESETS = [
   { name: 'Rose', background: '#fdf6f7', primary: '#e11d48' },
   { name: 'Lavender', background: '#f7f6fd', primary: '#6d28d9' },
   { name: 'Sand', background: '#f5f0e6', primary: '#9a3412' },
+  { name: 'Nord', background: '#2e3440', primary: '#88c0d0' },
+  { name: 'Dracula', background: '#282a36', primary: '#bd93f9' },
+  { name: 'Tokyo Night', background: '#1a1b26', primary: '#7aa2f7' },
+  { name: 'Catppuccin', background: '#1e1e2e', primary: '#f5c2e7' },
+  { name: 'Gruvbox', background: '#282828', primary: '#fabd2f' },
+  { name: 'Solarized', background: '#002b36', primary: '#2aa198' },
+  { name: 'Monokai', background: '#272822', primary: '#a6e22e' },
+  { name: 'Rosé Pine', background: '#191724', primary: '#ebbcba' },
+  { name: 'Latte', background: '#eff1f5', primary: '#8839ef' },
+  { name: 'Solar Light', background: '#fdf6e3', primary: '#268bd2' },
+  { name: 'Mint', background: '#f2faf6', primary: '#059669' },
+  { name: 'Sky', background: '#f3f8fd', primary: '#0284c7' },
 ];
 
 const THEME_VARS = ['--bg', '--panel', '--raise', '--line', '--line-strong', '--text', '--muted', '--faint', '--hover',

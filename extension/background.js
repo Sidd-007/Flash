@@ -159,6 +159,7 @@ function showOverlay(src, id, extensionOrigin) {
     if (e.data.type === 'ready') {
       ready = true;
       frame.focus();
+      frame.contentWindow.postMessage({ rdmDialog: id, type: 'focused' }, extensionOrigin);
     } else if (e.data.type === 'height') {
       card.style.height = `${Math.min(e.data.height, window.innerHeight - 32)}px`;
     } else if (e.data.type === 'close') {

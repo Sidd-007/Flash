@@ -13,7 +13,7 @@ mod tray;
 use std::sync::Arc;
 
 use rdm_manager::{Event, Manager};
-use tauri::{Emitter, Manager as _, RunEvent, WindowEvent};
+use tauri::{Emitter, Manager as _, WindowEvent};
 use tauri_plugin_notification::NotificationExt;
 use tokio::sync::broadcast::error::RecvError;
 
@@ -73,6 +73,7 @@ fn main() {
             commands::pause_all,
             commands::resume_all,
             commands::clear_completed,
+            commands::clear_all,
             commands::set_speed_limit,
             commands::segments,
             commands::get_settings,
@@ -96,10 +97,11 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("failed to build Flash");
 
-    app.run(|app, event| {
-        // Clicking the Dock icon brings the window back.
-        if let RunEvent::Reopen { .. } = event {
-            tray::show_main(app);
+    app.run(|_app, _event| {
+        // Clicking the Dock icon brings the window back (macOS only).
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Reopen { .. } = _event {
+            tray::show_main(_app);
         }
     });
 }

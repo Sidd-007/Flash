@@ -354,6 +354,7 @@ fn private_temp_dir() -> std::io::Result<PathBuf> {
     for n in 0..100u32 {
         let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.subsec_nanos());
         let dir = base.join(format!("flash-{}-{nanos:x}-{n}", std::process::id()));
+        #[cfg_attr(not(unix), allow(unused_mut))]
         let mut builder = std::fs::DirBuilder::new();
         #[cfg(unix)]
         std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);

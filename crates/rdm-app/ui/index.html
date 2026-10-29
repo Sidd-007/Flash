@@ -106,13 +106,24 @@
       </section>
       <div class="listbar">
         <div class="list-title"><span id="list-title">All</span><span class="mono count" id="list-count"></span></div>
-        <div class="list-actions mono">
-          <button id="btn-resume" class="ghost" title="Resume (Space)" disabled>Resume <kbd>␣</kbd></button>
-          <button id="btn-pause" class="ghost" title="Pause (Space)" disabled>Pause <kbd>␣</kbd></button>
-          <button id="btn-delete" class="ghost" title="Remove (⌫)" disabled>Remove <kbd>⌫</kbd></button>
-          <span class="divider"></span>
-          <button id="btn-resume-all" class="ghost">Resume all</button>
-          <button id="btn-pause-all" class="ghost">Pause all</button>
+        <div class="list-actions">
+          <!-- Only while something is selected. -->
+          <span class="sel-actions hidden" id="sel-actions">
+            <span class="sel-count mono" id="sel-count"></span>
+            <button id="btn-resume" class="ghost icon" title="Resume  Space" aria-label="Resume">
+              <svg viewBox="0 0 16 16"><path d="M5 3.8v8.4L12 8z" fill="currentColor" stroke="none"/></svg>
+            </button>
+            <button id="btn-pause" class="ghost icon" title="Pause  Space" aria-label="Pause">
+              <svg viewBox="0 0 16 16"><path d="M5.5 4v8M10.5 4v8"/></svg>
+            </button>
+            <button id="btn-delete" class="ghost icon" title="Remove  ⌫" aria-label="Remove">
+              <svg viewBox="0 0 16 16"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.7 8.5h5.6l.7-8.5"/></svg>
+            </button>
+            <span class="divider"></span>
+          </span>
+          <button id="btn-more" class="ghost icon" title="More" aria-label="More actions">
+            <svg viewBox="0 0 16 16"><circle cx="3.5" cy="8" r="1" fill="currentColor"/><circle cx="8" cy="8" r="1" fill="currentColor"/><circle cx="12.5" cy="8" r="1" fill="currentColor"/></svg>
+          </button>
         </div>
       </div>
 
@@ -274,6 +285,19 @@
         <span class="spacer"></span>
         <button type="button" class="ghost" id="r-cancel">Cancel</button>
         <button type="submit" class="danger" id="r-ok">Remove</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Clear all -->
+  <dialog id="dlg-clear" class="narrow">
+    <form method="dialog" id="form-clear">
+      <h2 id="c-title">Clear all downloads?</h2>
+      <p class="muted" id="c-text"></p>
+      <div class="buttons">
+        <span class="spacer"></span>
+        <button type="button" class="ghost" id="c-cancel">Cancel</button>
+        <button type="submit" class="danger" id="c-ok">Clear all</button>
       </div>
     </form>
   </dialog>

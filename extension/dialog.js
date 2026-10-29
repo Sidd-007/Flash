@@ -213,12 +213,24 @@ async function main() {
     if (e.key === 'Enter' && e.target.tagName !== 'SELECT' && e.target.tagName !== 'BUTTON') { e.preventDefault(); download(); }
     if (e.key === 'Escape') finish();
   });
+  // Selects the name (video titles have no extension yet; yt-dlp adds it),
+  // unless the user has already clicked into something.
+  const focusFirst = () => {
+    if (document.activeElement && document.activeElement !== document.body) return;
+    if (name) selectStem($('#name'), !video && !!ext);
+    else $('#ok').focus();
+  };
+  // Chrome ignores focus() in a frame from another origin until the page has
+  // focused that frame, which it does once we say we're ready, and then tells
+  // us so. The focus event covers the same moment where it fires.
+  if (document.hasFocus()) focusFirst();
+  window.addEventListener('focus', focusFirst, { once: true });
+  window.addEventListener('message', (e) => {
+    if (e.source === window.parent && e.data?.rdmDialog === id && e.data.type === 'focused') focusFirst();
+  });
   tellPage('ready');
   tellHeight();
   checkDuplicates();
-  // Video titles have no extension yet; yt-dlp adds it.
-  if (name) selectStem($('#name'), !video && !!ext);
-  else $('#ok').focus();
 }
 
 main();
