@@ -199,6 +199,7 @@ function makeRow(id) {
 
 function rowActions(d) {
   const acts = [];
+  if (d.status === 'queued' && d.retry_at > Date.now()) acts.push(['retry', 'Retry now', () => act('resume', d.id)]);
   if (d.status === 'running' || d.status === 'queued') acts.push(['pause', 'Pause', () => act('pause', d.id)]);
   if (d.status === 'paused') acts.push(['play', 'Resume', () => act('resume', d.id)]);
   if (d.status === 'failed') acts.push(['retry', 'Retry', () => act('resume', d.id)]);
@@ -853,6 +854,8 @@ function onRowMenu(e, id) {
   if (sel.some((d) => d.status === 'paused' || d.status === 'failed')) {
     items.push(['Resume', () => forSelected('resume', (d) => d.status === 'paused' || d.status === 'failed')]);
   }
+  const waiting = (d) => d.status === 'queued' && d.retry_at > Date.now();
+  if (sel.some(waiting)) items.push(['Retry now', () => forSelected('resume', waiting)]);
   if (sel.some((d) => d.status === 'running' || d.status === 'queued')) {
     items.push(['Pause', () => forSelected('pause', (d) => d.status === 'running' || d.status === 'queued')]);
   }

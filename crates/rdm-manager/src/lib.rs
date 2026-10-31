@@ -10,6 +10,7 @@ mod stats;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
@@ -29,11 +30,15 @@ pub use settings::{Category, Schedule, Settings, Theme};
 use db::{Db, HistoryEntry, NewDownload};
 
 const TICK: Duration = Duration::from_millis(500);
-/// Automatic retries after network failures before giving up.
-const MAX_AUTO_RETRIES: u32 = 20;
+/// Automatic retries in a row with no progress before giving up: about an hour.
+const MAX_AUTO_RETRIES: u32 = 60;
 /// First wait before an automatic retry; doubles each time up to `MAX_RETRY_WAIT`.
-const FIRST_RETRY_WAIT: Duration = Duration::from_secs(10);
-const MAX_RETRY_WAIT: Duration = Duration::from_secs(300);
+const FIRST_RETRY_WAIT: Duration = Duration::from_secs(3);
+const MAX_RETRY_WAIT: Duration = Duration::from_secs(60);
+/// The longest a server's own `Retry-After` is followed.
+const MAX_ASKED_WAIT: Duration = Duration::from_secs(300);
+/// A failed run that downloaded this much was working, so retries start over.
+const REAL_PROGRESS: u64 = 1024 * 1024;
 /// Ticks between writes of live byte counts to the database.
 const PERSIST_EVERY: u32 = 10;
 /// How often to look for finished files that were deleted outside Flash.
@@ -141,6 +146,8 @@ struct Active {
     total: Mutex<Option<u64>>,
     speed: Mutex<Speed>,
     started: Instant,
+    /// Bytes already there when this run started.
+    first_bytes: AtomicU64,
 }
 
 struct Speed {
@@ -562,6 +569,7 @@ fn pump_once(inner: &Arc<Inner>) -> Result<()> {
             total: Mutex::new(d.total),
             speed: Mutex::new(Speed { bytes: d.downloaded, at: Instant::now(), value: 0.0, peak: 0.0 }),
             started: Instant::now(),
+            first_bytes: AtomicU64::new(d.downloaded),
         });
         inner.db.lock().unwrap().set_status(d.id, Status::Running, None)?;
         active.insert(d.id, a.clone());
@@ -590,7 +598,8 @@ async fn run_download(inner: Arc<Inner>, d: Download, a: Arc<Active>) {
         (tail, s.peak)
     };
     let _ = inner.db.lock().unwrap().add_traffic(&stats::hour_key(chrono::Local::now().naive_local()), tail);
-    let run = Run { active_ms: a.started.elapsed().as_millis() as u64, peak_speed: peak };
+    let progressed = downloaded.is_some_and(|b| b >= a.first_bytes.load(Ordering::Relaxed) + REAL_PROGRESS);
+    let run = Run { active_ms: a.started.elapsed().as_millis() as u64, peak_speed: peak, progressed };
 
     if let Err(e) = finish(&inner, &d, result, reason, cancelled, downloaded, run) {
         eprintln!("rdm: could not record result of download {}: {e:#}", d.id);
@@ -680,13 +689,27 @@ fn detect_kind(url: &str) -> Kind {
     }
 }
 
+/// The next automatic retry after a failure: which attempt it is and how long
+/// to wait, or `None` to give up. A run that got somewhere starts the count
+/// over, so a host that drops connections now and then never builds up to
+/// long waits. A server asking for longer gets that.
+fn next_retry(previous: u32, progressed: bool, asked: Option<Duration>) -> Option<(u32, Duration)> {
+    let attempt = if progressed { 1 } else { previous + 1 };
+    if attempt > MAX_AUTO_RETRIES {
+        return None;
+    }
+    let backoff = (FIRST_RETRY_WAIT * 2u32.saturating_pow(attempt - 1)).min(MAX_RETRY_WAIT);
+    Some((attempt, backoff.max(asked.unwrap_or_default().min(MAX_ASKED_WAIT))))
+}
+
 /// Whether a failure is worth retrying later: the network, not the file.
 fn is_transient(e: &anyhow::Error) -> bool {
     for cause in e.chain() {
         if let Some(r) = cause.downcast_ref::<reqwest::Error>() {
             return match r.status() {
-                Some(s) => s.is_server_error() || matches!(s.as_u16(), 408 | 429),
-                None => r.is_connect() || r.is_timeout() || r.is_request() || r.is_body(),
+                Some(s) => s.is_server_error() || matches!(s.as_u16(), 408 | 425 | 429),
+                // Connections, timeouts and bodies cut off, however they surface.
+                None => !r.is_builder() && !r.is_redirect(),
             };
         }
         if let Some(io) = cause.downcast_ref::<std::io::Error>() {
@@ -700,7 +723,8 @@ fn is_transient(e: &anyhow::Error) -> bool {
     }
     let msg = format!("{e:#}").to_ascii_lowercase();
     ["connection closed after", "timed out", "temporary failure", "network is unreachable", "connection reset",
-     "http error 5", "nodename nor servname", "failed to resolve", "unable to download webpage"]
+     "http error 5", "nodename nor servname", "failed to resolve", "unable to download webpage",
+     "server ignored the range", "partial downloads right now"]
         .iter()
         .any(|needle| msg.contains(needle))
 }
@@ -708,6 +732,7 @@ fn is_transient(e: &anyhow::Error) -> bool {
 /// Records what the probe decided and starts tracking live progress.
 fn started(inner: &Arc<Inner>, d: &Download, a: &Active, info: &JobInfo, progress: Arc<Progress>) -> Result<()> {
     inner.db.lock().unwrap().set_started(d.id, &info.file_name, &info.path, info.total, info.resumable)?;
+    a.first_bytes.store(progress.downloaded(), Ordering::Relaxed);
     *a.speed.lock().unwrap() = Speed { bytes: progress.downloaded(), at: Instant::now(), value: 0.0, peak: 0.0 };
     *a.total.lock().unwrap() = info.total;
     *a.progress.lock().unwrap() = Some(progress);
@@ -719,6 +744,8 @@ fn started(inner: &Arc<Inner>, d: &Download, a: &Active, info: &JobInfo, progres
 struct Run {
     active_ms: u64,
     peak_speed: f64,
+    /// The run moved the download forward before it stopped.
+    progressed: bool,
 }
 
 fn finish(
@@ -775,27 +802,26 @@ fn finish(
             db().set_status(d.id, status, None)?;
         }
         Ok(Outcome::Paused { .. }) => db().set_status(d.id, Status::Paused, None)?,
-        Err(e)
-            if inner.settings.read().unwrap().auto_retry
-                && row.auto_retries < MAX_AUTO_RETRIES
-                && is_transient(&e) =>
-        {
-            let wait = (FIRST_RETRY_WAIT * 2u32.saturating_pow(row.auto_retries.min(16))).min(MAX_RETRY_WAIT);
-            let note = format!("network problem, retrying in {}s · {e:#}", wait.as_secs());
-            db().schedule_retry(d.id, db::now_ms() + wait.as_millis() as i64, row.auto_retries + 1, &note)?;
-            let wake = Arc::downgrade(inner);
-            tokio::spawn(async move {
-                tokio::time::sleep(wait + Duration::from_millis(50)).await;
-                if let Some(inner) = wake.upgrade() {
-                    inner.wake.notify_one();
-                }
-            });
-        }
         Err(e) => {
-            let error = format!("{e:#}");
-            db().set_status(d.id, Status::Failed, Some(&error))?;
-            db().add_history(&history(false, &name))?;
-            send(Event::Finished { id: d.id, name, path: row.path.clone(), ok: false, error: Some(error) });
+            let retry = (inner.settings.read().unwrap().auto_retry && is_transient(&e))
+                .then(|| next_retry(row.auto_retries, run.progressed, e.downcast_ref::<rdm_core::RetryAfter>().map(|w| w.0)))
+                .flatten();
+            if let Some((attempt, wait)) = retry {
+                let note = format!("network problem, retrying in {}s · {e:#}", wait.as_secs());
+                db().schedule_retry(d.id, db::now_ms() + wait.as_millis() as i64, attempt, &note)?;
+                let wake = Arc::downgrade(inner);
+                tokio::spawn(async move {
+                    tokio::time::sleep(wait + Duration::from_millis(50)).await;
+                    if let Some(inner) = wake.upgrade() {
+                        inner.wake.notify_one();
+                    }
+                });
+            } else {
+                let error = format!("{e:#}");
+                db().set_status(d.id, Status::Failed, Some(&error))?;
+                db().add_history(&history(false, &name))?;
+                send(Event::Finished { id: d.id, name, path: row.path.clone(), ok: false, error: Some(error) });
+            }
         }
     }
     Ok(())
@@ -958,4 +984,51 @@ fn guess_name(url: &str) -> String {
             Some(percent_encoding::percent_decode_str(&last).decode_utf8_lossy().into_owned())
         })
         .unwrap_or_else(|| url.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SEC: fn(u64) -> Duration = Duration::from_secs;
+
+    #[test]
+    fn waits_grow_gently_and_stop_at_a_minute() {
+        let waits: Vec<u64> = (0..8).map(|prev| next_retry(prev, false, None).unwrap().1.as_secs()).collect();
+        assert_eq!(waits, [3, 6, 12, 24, 48, 60, 60, 60]);
+        assert_eq!(next_retry(0, false, None).unwrap().0, 1);
+        assert_eq!(next_retry(4, false, None).unwrap().0, 5);
+    }
+
+    #[test]
+    fn progress_starts_the_count_over() {
+        assert_eq!(next_retry(30, true, None), Some((1, SEC(3))));
+        // However many retries came before: it was working.
+        assert_eq!(next_retry(MAX_AUTO_RETRIES, true, None), Some((1, SEC(3))));
+    }
+
+    #[test]
+    fn gives_up_only_after_a_long_time_with_no_progress() {
+        assert!(next_retry(MAX_AUTO_RETRIES - 1, false, None).is_some());
+        assert_eq!(next_retry(MAX_AUTO_RETRIES, false, None), None);
+        let total: Duration = (0..MAX_AUTO_RETRIES).map(|p| next_retry(p, false, None).unwrap().1).sum();
+        assert!(total > SEC(50 * 60) && total < SEC(70 * 60), "{total:?}");
+    }
+
+    #[test]
+    fn a_servers_own_wait_is_followed_within_reason() {
+        assert_eq!(next_retry(0, false, Some(SEC(120))).unwrap().1, SEC(120));
+        assert_eq!(next_retry(0, true, Some(SEC(40))).unwrap().1, SEC(40));
+        assert_eq!(next_retry(0, false, Some(SEC(9999))).unwrap().1, MAX_ASKED_WAIT);
+        assert_eq!(next_retry(5, false, Some(SEC(1))).unwrap().1, SEC(60), "never shorter than the backoff");
+    }
+
+    #[test]
+    fn server_hiccups_are_transient_but_a_changed_answer_on_a_file_is_not() {
+        for text in ["server ignored the range request (status 200 OK)", "the server isn't accepting partial downloads right now", "connection closed after 5 of 9 bytes"] {
+            assert!(is_transient(&anyhow::anyhow!("{text}")), "{text}");
+        }
+        assert!(!is_transient(&anyhow::anyhow!("disk writer stopped")));
+        assert!(!is_transient(&anyhow::anyhow!("file.zip was downloaded but failed verification")));
+    }
 }

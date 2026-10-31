@@ -103,6 +103,11 @@ impl Plan {
         (offset, n as usize, s.received >= s.end)
     }
 
+    /// Hands a segment back, for whichever worker is next free.
+    pub fn release(&mut self, id: usize) {
+        self.segments[id].owned = false;
+    }
+
     pub fn mark_written(&mut self, id: usize, n: u64) {
         self.segments[id].written += n;
     }
@@ -113,6 +118,16 @@ mod tests {
     use super::*;
 
     const MIB: u64 = 1 << 20;
+
+    #[test]
+    fn a_released_segment_goes_to_the_next_worker_where_it_stopped() {
+        let mut plan = Plan::new([(0, 4 * MIB)]);
+        assert_eq!(plan.assign(MIB), Some(0));
+        plan.claim(0, MIB as usize);
+        plan.release(0);
+        assert_eq!(plan.assign(MIB), Some(0), "taken up again, not split");
+        assert_eq!(plan.segment(0).received, MIB);
+    }
 
     #[test]
     fn even_split_covers_everything() {

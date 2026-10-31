@@ -384,3 +384,50 @@ async fn clear_all_keeps_finished_files_and_drops_partial_data() {
         assert!(!dir.path().join(format!("{name}.rdm.json")).exists());
     }
 }
+
+/// Answers everything with this status line and extra headers.
+async fn serve_status(status: &'static str, headers: &'static str) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move {
+        loop {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            tokio::spawn(async move {
+                let mut buf = [0u8; 2048];
+                let _ = sock.read(&mut buf).await;
+                let reply = format!("HTTP/1.1 {status}\r\nConnection: close\r\nContent-Length: 0\r\n{headers}\r\n");
+                let _ = sock.write_all(reply.as_bytes()).await;
+            });
+        }
+    });
+    base
+}
+
+async fn first_retry(m: &Manager, id: i64) -> rdm_manager::Download {
+    for _ in 0..100 {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let d = m.get(id).unwrap().unwrap().download;
+        if d.auto_retries > 0 {
+            return d;
+        }
+    }
+    panic!("no retry scheduled: {:?}", m.get(id).unwrap().unwrap().download);
+}
+
+#[tokio::test]
+async fn a_busy_host_is_retried_soon_or_when_it_asks() {
+    let dir = tempfile::tempdir().unwrap();
+    let m = manager(dir.path(), |_| {});
+    let now = || chrono::Utc::now().timestamp_millis();
+
+    let base = serve_status("503 Service Unavailable", "").await;
+    let d = first_retry(&m, add(&m, format!("{base}/busy.iso"))).await;
+    assert_eq!(d.status, Status::Queued);
+    assert!(d.retry_at.unwrap() - now() <= 3_000, "the first wait is short");
+
+    let base = serve_status("429 Too Many Requests", "Retry-After: 45\r\n").await;
+    let d = first_retry(&m, add(&m, format!("{base}/slow-down.iso"))).await;
+    let wait = d.retry_at.unwrap() - now();
+    assert!(wait > 40_000 && wait <= 45_000, "waits as asked: {wait} ms");
+    assert!(d.error.as_deref().unwrap().contains("retrying in 45s"), "{:?}", d.error);
+}

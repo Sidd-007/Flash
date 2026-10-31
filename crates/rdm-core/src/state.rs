@@ -52,13 +52,44 @@ impl SavedState {
 
     /// Whether the file on the server is still the one we started downloading.
     pub fn still_valid(&self, probe: &Probe) -> bool {
-        fn same(a: &Option<String>, b: &Option<String>) -> bool {
-            a.is_none() || b.is_none() || a == b
-        }
+        let differs = |a: &Option<String>, b: &Option<String>| a.is_some() && b.is_some() && a != b;
+        let matches = |a: &Option<String>, b: &Option<String>| a.is_some() && a == b;
+        let (etag, modified) = ((&self.etag, &probe.etag), (&self.last_modified, &probe.last_modified));
+        // The servers behind one address can disagree on one of these for the
+        // same file, so the other one matching settles it.
+        let changed = (differs(etag.0, etag.1) && !matches(modified.0, modified.1))
+            || (differs(modified.0, modified.1) && !matches(etag.0, etag.1));
         probe.ranges
             && probe.total == Some(self.total)
-            && same(&self.etag, &probe.etag)
-            && same(&self.last_modified, &probe.last_modified)
+            && !changed
             && self.remaining.iter().all(|&(s, e)| s <= e && e <= self.total)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn probe(etag: Option<&str>, modified: Option<&str>) -> Probe {
+        Probe {
+            total: Some(100),
+            ranges: true,
+            file_name: None,
+            etag: etag.map(str::to_owned),
+            last_modified: modified.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn a_file_counts_as_changed_only_when_nothing_vouches_for_it() {
+        let saved = SavedState::new("https://x/f", 100, &probe(Some("a"), Some("mon")));
+        assert!(saved.still_valid(&probe(Some("a"), Some("mon"))));
+        assert!(saved.still_valid(&probe(None, None)), "no validators to compare");
+        assert!(saved.still_valid(&probe(Some("b"), Some("mon"))), "another server's etag, same date");
+        assert!(saved.still_valid(&probe(Some("a"), Some("tue"))), "same etag, another server's date");
+        assert!(!saved.still_valid(&probe(Some("b"), Some("tue"))), "both differ");
+        assert!(!saved.still_valid(&probe(Some("b"), None)), "the only validator differs");
+        assert!(!saved.still_valid(&Probe { total: Some(99), ..probe(Some("a"), Some("mon")) }), "another size");
+        assert!(!saved.still_valid(&Probe { ranges: false, ..probe(Some("a"), Some("mon")) }));
     }
 }

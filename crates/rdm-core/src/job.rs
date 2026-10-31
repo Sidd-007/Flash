@@ -3,7 +3,7 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
 use bytes::Bytes;
@@ -19,14 +19,23 @@ use crate::checksum::Checksum;
 use crate::filename;
 use crate::limit::RateLimiter;
 use crate::plan::Plan;
-use crate::probe::{self, Probe};
+use crate::probe::{self, Probe, RetryAfter, status_error};
 use crate::state::SavedState;
 
 /// Segments smaller than this aren't worth another connection.
 const MIN_SPLIT: u64 = 1 << 20;
 pub(crate) const MAX_CONNECTIONS: usize = 32;
 /// Consecutive failures without progress before a segment gives up.
+const WRITER_STOPPED: &str = "disk writer stopped";
 pub(crate) const MAX_RETRIES: u32 = 5;
+/// Tries for a connection that isn't the only one left. It gives up its work
+/// quickly, since a refusal usually means the host limits connections.
+const RETRIES_WITH_COMPANY: u32 = 2;
+/// With no new bytes on any connection for this long, the download stops
+/// here and the queue decides when to try again.
+const STALL_LIMIT: Duration = Duration::from_secs(45);
+/// The longest a connection waits for itself, whatever a server asks for.
+const LONGEST_WAIT: Duration = Duration::from_secs(30);
 const SAVE_EVERY: Duration = Duration::from_secs(2);
 /// Chunks buffered between the network and the disk writer.
 const WRITE_QUEUE: usize = 256;
@@ -242,6 +251,11 @@ impl Job {
             let paths = Paths::new(&req.dir, &file_name);
             let saved = SavedState::load(&paths.state);
             if saved.as_ref().is_some_and(|s| s.url == url.as_str()) {
+                // A busy server can answer a range request with a plain 200.
+                // Starting over would throw away everything downloaded.
+                if paths.part.exists() && !probe.ranges {
+                    bail!("the server isn't accepting partial downloads right now");
+                }
                 resume = saved.filter(|s| paths.part.exists() && s.still_valid(&probe));
                 break;
             }
@@ -333,6 +347,9 @@ impl Job {
             progress,
             tx,
             stop: stop.clone(),
+            working: AtomicUsize::new(info.connections),
+            began: Instant::now(),
+            last_bytes_ms: AtomicU64::new(0),
         });
         let mut workers = JoinSet::new();
         for _ in 0..info.connections {
@@ -423,6 +440,23 @@ struct Ctx {
     progress: Arc<Progress>,
     tx: mpsc::Sender<Chunk>,
     stop: CancellationToken,
+    /// Connections not sitting out or finished.
+    working: AtomicUsize,
+    began: Instant,
+    /// When bytes last arrived on any connection, since `began`.
+    last_bytes_ms: AtomicU64,
+}
+
+impl Ctx {
+    fn note_bytes(&self) {
+        self.last_bytes_ms.store(self.began.elapsed().as_millis() as u64, Ordering::Relaxed);
+    }
+
+    /// Whether no connection has received anything for a while.
+    fn stalled(&self) -> bool {
+        let last = Duration::from_millis(self.last_bytes_ms.load(Ordering::Relaxed));
+        self.began.elapsed().saturating_sub(last) > STALL_LIMIT
+    }
 }
 
 struct Chunk {
@@ -431,9 +465,14 @@ struct Chunk {
     data: Bytes,
 }
 
-/// One connection: keeps taking segments until there is nothing left to take.
+/// One connection: keeps taking segments until there is nothing left to take. When its connection keeps failing it
+/// hands its bytes back and sits out for a while, so one refused connection
+/// (hosts often limit how many they allow) doesn't stop the others. An error
+/// here ends the whole download, which takes the last connection failing, no
+/// bytes arriving anywhere for a while, or an answer no retry can change.
 async fn worker(ctx: Arc<Ctx>) -> Result<()> {
     let min_split = if ctx.ranged { MIN_SPLIT } else { u64::MAX };
+    let mut strikes = 0;
     while !ctx.stop.is_cancelled() {
         let Some(id) = ctx.plan.lock().unwrap().assign(min_split) else {
             break;
@@ -441,9 +480,60 @@ async fn worker(ctx: Arc<Ctx>) -> Result<()> {
         ctx.progress.active.fetch_add(1, Ordering::Relaxed);
         let result = download_segment(&ctx, id).await;
         ctx.progress.active.fetch_sub(1, Ordering::Relaxed);
-        result?;
+        let Err(e) = result else {
+            strikes = 0;
+            continue;
+        };
+        ctx.plan.lock().unwrap().release(id);
+        let others = ctx.working.fetch_sub(1, Ordering::SeqCst) - 1;
+        if others == 0 || ctx.stalled() || !worth_retrying(&e) {
+            return Err(e);
+        }
+        strikes += 1;
+        let finished = sit_out(&ctx, sit_out_time(strikes)).await;
+        ctx.working.fetch_add(1, Ordering::SeqCst);
+        if finished {
+            break;
+        }
     }
+    ctx.working.fetch_sub(1, Ordering::SeqCst);
     Ok(())
+}
+
+/// 5 s, 10 s, 20 s, ... up to a minute, so a host's limit isn't hammered.
+fn sit_out_time(strikes: u32) -> Duration {
+    Duration::from_secs(5 << strikes.clamp(1, 5).saturating_sub(1)).min(Duration::from_secs(60))
+}
+
+/// Waits to try again. Returns true if there's no need: the download
+/// finished without this connection, or it's stopping.
+async fn sit_out(ctx: &Ctx, time: Duration) -> bool {
+    let until = Instant::now() + time;
+    loop {
+        if ctx.plan.lock().unwrap().is_complete() {
+            return true;
+        }
+        let left = until.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return false;
+        }
+        tokio::select! {
+            _ = ctx.stop.cancelled() => return true,
+            _ = tokio::time::sleep(left.min(Duration::from_millis(250))) => {}
+        }
+    }
+}
+
+/// Whether another try could go differently. A 403 can be a connection limit,
+/// so it counts; these answers say the file itself isn't available, and a
+/// disk that stopped writing won't be helped by the network.
+fn worth_retrying(e: &anyhow::Error) -> bool {
+    for cause in e.chain() {
+        if let Some(status) = cause.downcast_ref::<reqwest::Error>().and_then(reqwest::Error::status) {
+            return !matches!(status.as_u16(), 401 | 404 | 410 | 416);
+        }
+    }
+    !format!("{e:#}").contains(WRITER_STOPPED)
 }
 
 /// Streams one segment, retrying with backoff. Retries continue from the
@@ -460,13 +550,15 @@ async fn download_segment(ctx: &Ctx, id: usize) -> Result<()> {
         }
         let progressed = ctx.plan.lock().unwrap().segment(id).received > before;
         failures = if progressed { 1 } else { failures + 1 };
+        let limit = if ctx.working.load(Ordering::SeqCst) > 1 { RETRIES_WITH_COMPANY } else { MAX_RETRIES };
         // Without ranges a retry would have to start from zero.
-        if !ctx.ranged || failures > MAX_RETRIES {
+        if !ctx.ranged || failures > limit || !worth_retrying(&e) {
             return Err(e);
         }
+        let asked = e.downcast_ref::<RetryAfter>().map_or(Duration::ZERO, |w| w.0);
         tokio::select! {
             _ = ctx.stop.cancelled() => return Ok(()),
-            _ = tokio::time::sleep(retry_delay(failures)) => {}
+            _ = tokio::time::sleep(retry_delay(failures).max(asked).min(LONGEST_WAIT)) => {}
         }
     }
 }
@@ -489,8 +581,11 @@ async fn stream_segment(ctx: &Ctx, id: usize) -> Result<()> {
     }
     let resp = tokio::select! {
         _ = ctx.stop.cancelled() => return Ok(()),
-        resp = req.send() => resp?.error_for_status()?,
+        resp = req.send() => resp?,
     };
+    if !resp.status().is_success() {
+        return Err(status_error(resp));
+    }
     if ctx.ranged && resp.status() != StatusCode::PARTIAL_CONTENT {
         bail!("server ignored the range request (status {})", resp.status());
     }
@@ -513,11 +608,12 @@ async fn stream_segment(ctx: &Ctx, id: usize) -> Result<()> {
         // split this segment), so ask the plan how much of this chunk is ours.
         let (offset, n, done) = ctx.plan.lock().unwrap().claim(id, data.len());
         if n > 0 {
+            ctx.note_bytes();
             data.truncate(n);
             ctx.tx
                 .send(Chunk { segment: id, offset, data })
                 .await
-                .map_err(|_| anyhow!("disk writer stopped"))?;
+                .map_err(|_| anyhow!(WRITER_STOPPED))?;
         }
         if done {
             return Ok(());

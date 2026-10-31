@@ -21,6 +21,7 @@ pub use checksum::Checksum;
 pub use hls::{HlsJob, HlsRequest};
 pub use job::{Job, JobInfo, Outcome, Progress, Request, SegmentView, relink};
 pub use limit::{RateLimiter, parse_rate};
+pub use probe::RetryAfter;
 pub use video::{VideoJob, VideoRequest};
 
 /// An HTTP client tuned for segmented downloads.

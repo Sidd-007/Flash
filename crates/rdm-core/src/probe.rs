@@ -1,6 +1,8 @@
-use anyhow::{Context, Result, bail};
-use reqwest::header::{CONTENT_DISPOSITION, CONTENT_RANGE, ETAG, HeaderMap, LAST_MODIFIED, RANGE};
-use reqwest::{Client, StatusCode};
+use std::time::Duration;
+
+use anyhow::{Context, Result};
+use reqwest::header::{CONTENT_DISPOSITION, CONTENT_RANGE, ETAG, HeaderMap, LAST_MODIFIED, RANGE, RETRY_AFTER};
+use reqwest::{Client, Response, StatusCode};
 use url::Url;
 
 use crate::filename;
@@ -48,9 +50,35 @@ pub(crate) async fn probe(client: &Client, url: &Url, headers: &HeaderMap) -> Re
         // Empty files can't satisfy "bytes=0-0"; a plain GET handles them.
         StatusCode::RANGE_NOT_SATISFIABLE => {}
         s if s.is_success() => probe.total = resp.content_length(),
-        s => bail!("server responded with {s}"),
+        _ => return Err(status_error(resp)),
     }
     Ok(probe)
+}
+
+/// A server asked us to come back after this long (`Retry-After`). Found on
+/// errors with `downcast_ref`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RetryAfter(pub Duration);
+
+impl std::fmt::Display for RetryAfter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "the server asked to wait {} s", self.0.as_secs())
+    }
+}
+
+/// The error for an unsuccessful response, keeping its status and any wait
+/// the server asked for. `Retry-After` can also be a date; only seconds are
+/// common enough for downloads to bother with.
+pub(crate) fn status_error(resp: Response) -> anyhow::Error {
+    let wait = matches!(resp.status().as_u16(), 429 | 503)
+        .then(|| resp.headers().get(RETRY_AFTER)?.to_str().ok()?.trim().parse().ok())
+        .flatten()
+        .map(Duration::from_secs);
+    match (resp.error_for_status(), wait) {
+        (Err(e), Some(wait)) => anyhow::Error::new(e).context(RetryAfter(wait)),
+        (Err(e), None) => e.into(),
+        (Ok(resp), _) => anyhow::anyhow!("unexpected response: {}", resp.status()),
+    }
 }
 
 /// `bytes 0-0/12345` -> 12345 (`*` means unknown).
