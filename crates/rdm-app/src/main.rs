@@ -87,6 +87,7 @@ fn main() {
             commands::set_autostart,
             commands::bridge_status,
             commands::tools_status,
+            commands::debrid_account,
             commands::get_profile,
             commands::set_profile,
             commands::find_duplicates,

@@ -35,6 +35,8 @@ pub struct Settings {
     /// Global limit of the "Background" speed profile, bytes/s.
     pub background_limit: u64,
     pub theme: Theme,
+    /// Real-Debrid API token; empty means file host links download directly.
+    pub realdebrid_token: String,
 }
 
 impl Default for Settings {
@@ -57,6 +59,7 @@ impl Default for Settings {
             video_quality: "best".into(),
             background_limit: 1024 * 1024,
             theme: Theme::default(),
+            realdebrid_token: String::new(),
         }
     }
 }
@@ -69,6 +72,7 @@ impl Settings {
     }
 
     pub(crate) fn sanitized(mut self) -> Self {
+        self.realdebrid_token = self.realdebrid_token.trim().to_owned();
         self.max_active = self.max_active.clamp(1, 20);
         self.connections = self.connections.clamp(1, 32);
         self.theme.background = self.theme.background.filter(|c| is_hex_color(c));

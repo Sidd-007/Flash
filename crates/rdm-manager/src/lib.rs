@@ -5,29 +5,32 @@
 //! [`Event`]s for a UI to render.
 
 mod db;
+mod debrid;
 mod settings;
 mod stats;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use rdm_core::{Checksum, HlsJob, HlsRequest, Job, JobInfo, Outcome, Progress, RateLimiter, Request, VideoJob, VideoRequest};
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use reqwest::header::{AUTHORIZATION, COOKIE, HeaderMap, HeaderName, HeaderValue, PROXY_AUTHORIZATION, REFERER};
 use serde::Serialize;
 use tokio::sync::{Notify, broadcast};
 use tokio_util::sync::CancellationToken;
 
 pub use db::{Download, Group, Kind, Status};
+pub use debrid::DebridAccount;
 pub use stats::{Day, Stats};
 pub use rdm_core::SegmentView;
 pub use rdm_core::video::{find_tool, home_dir};
 pub use settings::{Category, Schedule, Settings, Theme};
 
 use db::{Db, HistoryEntry, NewDownload};
+use debrid::{ApiError, Debrid};
 
 const TICK: Duration = Duration::from_millis(500);
 /// Automatic retries in a row with no progress before giving up: about an hour.
@@ -126,6 +129,10 @@ struct Inner {
     client: reqwest::Client,
     events: broadcast::Sender<Event>,
     wake: Notify,
+    debrid: Debrid,
+    /// For starting tasks from methods that may be called outside the
+    /// runtime, like the app's commands on the UI thread.
+    runtime: tokio::runtime::Handle,
 }
 
 /// Why a running download is being cancelled.
@@ -148,6 +155,8 @@ struct Active {
     started: Instant,
     /// Bytes already there when this run started.
     first_bytes: AtomicU64,
+    /// This run uses a link from Real-Debrid, which a new one can replace.
+    via_debrid: AtomicBool,
 }
 
 struct Speed {
@@ -195,10 +204,15 @@ impl Manager {
             client: rdm_core::default_client()?,
             events: broadcast::channel(256).0,
             wake: Notify::new(),
+            debrid: Debrid::new(),
+            runtime: tokio::runtime::Handle::current(),
         });
         tokio::spawn(pump(Arc::downgrade(&inner)));
         tokio::spawn(ticker(Arc::downgrade(&inner)));
         tokio::spawn(sweeper(Arc::downgrade(&inner)));
+        if !inner.settings.read().unwrap().realdebrid_token.is_empty() {
+            tokio::spawn(refresh_debrid_hosts(Arc::downgrade(&inner)));
+        }
         Ok(Self { inner })
     }
 
@@ -212,6 +226,9 @@ impl Manager {
 
     pub fn update_settings(&self, settings: Settings) -> Result<Settings> {
         let settings = settings.sanitized();
+        if !settings.realdebrid_token.is_empty() && settings.realdebrid_token != self.settings().realdebrid_token {
+            self.inner.runtime.spawn(refresh_debrid_hosts(Arc::downgrade(&self.inner)));
+        }
         self.inner.db.lock().unwrap().save_settings(&settings)?;
         self.inner.global_limit.set_rate(settings.speed_limit);
         *self.inner.settings.write().unwrap() = settings.clone();
@@ -271,6 +288,22 @@ impl Manager {
         }
         self.inner.wake.notify_one();
         Ok(ids)
+    }
+
+    /// The Real-Debrid account a token belongs to, to check it works.
+    pub async fn debrid_account(&self, token: &str) -> Result<DebridAccount> {
+        self.inner.debrid.account(&self.inner.client, token.trim()).await
+    }
+
+    /// Reloads which hosts Real-Debrid handles.
+    pub async fn refresh_debrid_hosts(&self) -> Result<()> {
+        self.inner.debrid.refresh_hosts(&self.inner.client).await
+    }
+
+    /// Points at a stand-in for Real-Debrid's API, for tests.
+    #[doc(hidden)]
+    pub fn set_debrid_api(&self, base: &str) {
+        self.inner.debrid.set_base(base);
     }
 
     /// Lifetime and recent download statistics.
@@ -424,6 +457,9 @@ impl Manager {
         if rdm_core::video::is_video_site(url) {
             return rdm_core::video::find_tool("yt-dlp").is_some() && !u.path().trim_matches('/').is_empty();
         }
+        if !self.settings().realdebrid_token.is_empty() && self.inner.debrid.covers(url) && !u.path().trim_matches('/').is_empty() {
+            return true;
+        }
         let name = guess_name(url);
         self.inner.settings.read().unwrap().category_for(&name).is_some()
     }
@@ -570,6 +606,7 @@ fn pump_once(inner: &Arc<Inner>) -> Result<()> {
             speed: Mutex::new(Speed { bytes: d.downloaded, at: Instant::now(), value: 0.0, peak: 0.0 }),
             started: Instant::now(),
             first_bytes: AtomicU64::new(d.downloaded),
+            via_debrid: AtomicBool::new(false),
         });
         inner.db.lock().unwrap().set_status(d.id, Status::Running, None)?;
         active.insert(d.id, a.clone());
@@ -599,7 +636,12 @@ async fn run_download(inner: Arc<Inner>, d: Download, a: Arc<Active>) {
     };
     let _ = inner.db.lock().unwrap().add_traffic(&stats::hour_key(chrono::Local::now().naive_local()), tail);
     let progressed = downloaded.is_some_and(|b| b >= a.first_bytes.load(Ordering::Relaxed) + REAL_PROGRESS);
-    let run = Run { active_ms: a.started.elapsed().as_millis() as u64, peak_speed: peak, progressed };
+    let run = Run {
+        active_ms: a.started.elapsed().as_millis() as u64,
+        peak_speed: peak,
+        progressed,
+        via_debrid: a.via_debrid.load(Ordering::Relaxed),
+    };
 
     if let Err(e) = finish(&inner, &d, result, reason, cancelled, downloaded, run) {
         eprintln!("rdm: could not record result of download {}: {e:#}", d.id);
@@ -610,6 +652,48 @@ async fn run_download(inner: Arc<Inner>, d: Download, a: Arc<Active>) {
     inner.wake.notify_one();
 }
 
+/// How to fetch a file this run: straight from its link, or through a direct
+/// link from Real-Debrid. The row keeps the original link, so every run (and
+/// retry) gets a fresh direct link and an expired one replaces itself.
+struct Source {
+    url: String,
+    file_name: Option<String>,
+    connections: usize,
+    headers: HeaderMap,
+}
+
+async fn file_source(inner: &Arc<Inner>, d: &Download, a: &Active) -> Result<Source> {
+    let direct = || -> Result<Source> {
+        Ok(Source { url: d.url.clone(), file_name: d.file_name.clone(), connections: d.connections, headers: header_map(&d.headers)? })
+    };
+    let token = inner.settings.read().unwrap().realdebrid_token.clone();
+    if token.is_empty() || !inner.debrid.covers(&d.url) {
+        return direct();
+    }
+    let unlocked = match inner.debrid.unlock(&inner.client, &token, &d.url).await {
+        Ok(unlocked) => unlocked,
+        Err(e) if e.downcast_ref::<ApiError>().is_some_and(ApiError::not_for_debrid) => return direct(),
+        Err(e) => return Err(e),
+    };
+    a.via_debrid.store(true, Ordering::Relaxed);
+
+    // Cookies and the page address were for the file host, not Real-Debrid's servers.
+    let mut headers = header_map(&d.headers)?;
+    for name in [COOKIE, AUTHORIZATION, PROXY_AUTHORIZATION, REFERER] {
+        headers.remove(name);
+    }
+    // Keep a name the user chose; one just taken from the link is the host's page.
+    let named_after_link = d.file_name.as_deref().is_none_or(|n| n == guess_name(&d.url));
+    let file_name = if named_after_link { unlocked.file_name } else { d.file_name.clone() };
+    // A partial file is tied to the link it started with: move it to the new one.
+    let unfinished = d.path.as_ref().filter(|p| PathBuf::from(format!("{}.rdm.json", p.display())).exists());
+    if let Some(path) = unfinished {
+        rdm_core::relink(&inner.client, path, &unlocked.link, &headers).await?;
+    }
+    let connections = unlocked.chunks.map_or(d.connections, |c| d.connections.min(c));
+    Ok(Source { url: unlocked.link, file_name: file_name.or(d.file_name.clone()), connections, headers })
+}
+
 async fn download(inner: &Arc<Inner>, d: &Download, a: &Active) -> Result<Outcome> {
     let headers = header_map(&d.headers)?;
     let limiters = vec![inner.global_limit.clone(), a.limiter.clone()];
@@ -618,12 +702,16 @@ async fn download(inner: &Arc<Inner>, d: &Download, a: &Active) -> Result<Outcom
 
     match d.kind {
         Kind::File => {
+            let source = tokio::select! {
+                _ = cancel.cancelled() => return Ok(Outcome::Paused { resumable: true }),
+                source = file_source(inner, d, a) => source?,
+            };
             let job = Job::prepare(client, Request {
-                url: d.url.clone(),
+                url: source.url,
                 dir: d.dir.clone(),
-                file_name: d.file_name.clone(),
-                connections: d.connections,
-                headers,
+                file_name: source.file_name,
+                connections: source.connections,
+                headers: source.headers,
                 limiters,
                 checksum: d.checksum.as_deref().map(str::parse).transpose()?,
             });
@@ -702,9 +790,21 @@ fn next_retry(previous: u32, progressed: bool, asked: Option<Duration>) -> Optio
     Some((attempt, backoff.max(asked.unwrap_or_default().min(MAX_ASKED_WAIT))))
 }
 
+/// Whether a download link answered with a refusal, as an expired one does.
+/// For a Real-Debrid link that's worth another run, which gets a fresh link;
+/// if the file itself is gone, Real-Debrid says so then.
+fn link_refused(e: &anyhow::Error) -> bool {
+    e.chain().any(|cause| {
+        cause.downcast_ref::<reqwest::Error>().and_then(reqwest::Error::status).is_some_and(|s| s.is_client_error())
+    })
+}
+
 /// Whether a failure is worth retrying later: the network, not the file.
 fn is_transient(e: &anyhow::Error) -> bool {
     for cause in e.chain() {
+        if let Some(api) = cause.downcast_ref::<ApiError>() {
+            return api.is_temporary();
+        }
         if let Some(r) = cause.downcast_ref::<reqwest::Error>() {
             return match r.status() {
                 Some(s) => s.is_server_error() || matches!(s.as_u16(), 408 | 425 | 429),
@@ -746,6 +846,8 @@ struct Run {
     peak_speed: f64,
     /// The run moved the download forward before it stopped.
     progressed: bool,
+    /// It used a Real-Debrid link, which the next run replaces.
+    via_debrid: bool,
 }
 
 fn finish(
@@ -803,7 +905,7 @@ fn finish(
         }
         Ok(Outcome::Paused { .. }) => db().set_status(d.id, Status::Paused, None)?,
         Err(e) => {
-            let retry = (inner.settings.read().unwrap().auto_retry && is_transient(&e))
+            let retry = (inner.settings.read().unwrap().auto_retry && (is_transient(&e) || (run.via_debrid && link_refused(&e))))
                 .then(|| next_retry(row.auto_retries, run.progressed, e.downcast_ref::<rdm_core::RetryAfter>().map(|w| w.0)))
                 .flatten();
             if let Some((attempt, wait)) = retry {
@@ -891,6 +993,14 @@ fn delete_files(d: &Download, delete_final: bool) {
 }
 
 /// Publishes live speed and progress twice a second.
+/// Loads Real-Debrid's list of hosts; until then a built-in one is used.
+async fn refresh_debrid_hosts(inner: std::sync::Weak<Inner>) {
+    let Some(inner) = inner.upgrade() else { return };
+    if let Err(e) = inner.debrid.refresh_hosts(&inner.client).await {
+        eprintln!("rdm: could not load Real-Debrid's hosts: {e:#}");
+    }
+}
+
 /// Keeps the list in step with the disk: see [`Manager::forget_missing`].
 async fn sweeper(inner: std::sync::Weak<Inner>) {
     loop {

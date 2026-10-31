@@ -311,6 +311,7 @@
         <button type="button" data-tab="categories">Types</button>
         <button type="button" data-tab="schedule">Schedule</button>
         <button type="button" data-tab="browser">Browser</button>
+        <button type="button" data-tab="debrid">Real-Debrid</button>
       </div>
 
       <div class="tab" data-tab="general">
@@ -368,6 +369,18 @@
           <label class="field"><span>Stop</span><input id="s-stop" type="time"></label>
         </div>
         <p class="muted">At the stop time, running downloads go back to the queue. Anything you start by hand ignores the schedule.</p>
+      </div>
+
+      <div class="tab hidden" data-tab="debrid">
+        <p class="hint rd-hint">Download from Rapidgator and other file hosts through your Real-Debrid account. Paste a host's link into Add as usual; Flash gets the fast link for you, and a new one if it expires. Get your token at <code>real-debrid.com/apitoken</code>.</p>
+        <label class="field">
+          <span>API token</span>
+          <div class="picker">
+            <input id="s-rd-token" type="password" placeholder="not connected" spellcheck="false" autocomplete="off" data-1p-ignore data-lpignore="true">
+            <button type="button" id="s-rd-check" class="ghost mono">Check</button>
+          </div>
+        </label>
+        <div class="tools" id="s-rd-status"></div>
       </div>
 
       <div class="tab hidden" data-tab="browser">

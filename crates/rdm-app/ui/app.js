@@ -1313,6 +1313,8 @@ async function openSettings() {
   $('#s-conns').value = s.connections;
   $('#s-limit').value = fmtRate(s.speed_limit);
   $('#s-bglimit').value = fmtRate(s.background_limit);
+  $('#s-rd-token').value = s.realdebrid_token || '';
+  $('#s-rd-status').textContent = '';
   $('#s-notify').checked = s.notify;
   $('#s-clipboard').checked = s.clipboard_watch;
   $('#s-awake').checked = s.keep_awake;
@@ -1363,6 +1365,22 @@ function selectTab(name) {
   for (const t of $$('#form-settings .tab')) t.classList.toggle('hidden', t.dataset.tab !== name);
 }
 
+/** Asks Real-Debrid who a token belongs to, so a bad one shows up here. */
+async function checkDebrid() {
+  const status = $('#s-rd-status');
+  const token = $('#s-rd-token').value.trim();
+  if (!token) { status.textContent = 'Paste your token first.'; return; }
+  status.textContent = 'Checking…';
+  try {
+    const a = await invoke('debrid_account', { token });
+    const until = a.expiration ? new Date(a.expiration).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+    const plan = a.type === 'premium' ? `premium${until ? ` until ${until}` : ''}` : 'free account: most hosts need premium';
+    status.textContent = `Connected as ${a.username} · ${plan}. Click Save to use it.`;
+  } catch (x) {
+    status.textContent = String(x);
+  }
+}
+
 async function submitSettings(e) {
   e.preventDefault();
   const err = $('#s-error');
@@ -1382,6 +1400,7 @@ async function submitSettings(e) {
     connections: Number($('#s-conns').value) || 8,
     speed_limit: limit,
     background_limit: bgLimit || 1024 * 1024,
+    realdebrid_token: $('#s-rd-token').value.trim(),
     notify: $('#s-notify').checked,
     clipboard_watch: $('#s-clipboard').checked,
     keep_awake: $('#s-awake').checked,
@@ -1502,6 +1521,7 @@ function bind() {
   $('#form-settings').onsubmit = submitSettings;
   $('#s-cancel').onclick = () => $('#dlg-settings').close();
   $('#s-choose').onclick = () => chooseFolder($('#s-dir'));
+  $('#s-rd-check').onclick = checkDebrid;
   $('#s-addcat').onclick = () => $('#s-cats').append(catRow());
   $('#s-copy-token').onclick = () => invoke('copy_text', { text: $('#s-token').value });
   $('#s-new-token').onclick = newToken;

@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use rdm_manager::{AddRequest, DownloadView, Duplicate, Manager, SegmentView, Settings, Stats};
+use rdm_manager::{AddRequest, DebridAccount, DownloadView, Duplicate, Manager, SegmentView, Settings, Stats};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
@@ -102,6 +102,12 @@ pub fn save_settings(app: AppHandle, m: State<Manager>, settings: Settings) -> R
     let _ = app.emit("rdm-settings-changed", ());
     profile::changed(&app);
     Ok(saved)
+}
+
+/// The Real-Debrid account a token belongs to.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn debrid_account(m: State<'_, Manager>, token: String) -> Res<DebridAccount> {
+    m.debrid_account(&token).await.map_err(err)
 }
 
 #[tauri::command(rename_all = "snake_case")]

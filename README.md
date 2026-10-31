@@ -6,6 +6,7 @@ A fast download manager for macOS and Windows, written in Rust.
 - Queue, scheduler, speed limits and a menu bar (or tray) panel
 - Browser extension that sends downloads to Flash, with a **Download** button on video players on any site
 - Videos from YouTube and ~1,800 other sites through `yt-dlp`, plus HLS (`.m3u8`) and DASH (`.mpd`) streams
+- File hosts like Rapidgator through your Real-Debrid account: add your API token in **Settings → Real-Debrid**, then paste the host's link
 
 ## Install on macOS
 

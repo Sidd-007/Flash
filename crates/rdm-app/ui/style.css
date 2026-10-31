@@ -107,7 +107,7 @@ button.danger { background: var(--danger); color: #fff; font-weight: 550; }
 
 /* ---------- inputs ---------- */
 
-input[type=text], input[type=number], input[type=search], input[type=time], textarea {
+input[type=text], input[type=password], input[type=number], input[type=search], input[type=time], textarea {
   font: inherit;
   color: var(--text);
   background: var(--raise);
@@ -551,6 +551,7 @@ dialog.palette { width: 600px; top: 14vh; margin-top: 0; overflow: hidden; }
 .note.dupe { border-style: solid; color: var(--text); line-height: 1.6; }
 .note.dupe .muted { color: var(--muted); }
 .bg-hint { align-self: end; margin: 0 0 8px; }
+.rd-hint { margin: 0; line-height: 1.6; }
 
 /* ---------- theme ---------- */
 .theme .panels { margin-top: 12px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }

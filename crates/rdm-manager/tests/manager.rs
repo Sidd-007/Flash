@@ -1,7 +1,7 @@
 //! Queue behaviour end to end against a local range-capable server.
 
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use rdm_manager::{AddRequest, Event, Manager, Settings, Status};
@@ -430,4 +430,328 @@ async fn a_busy_host_is_retried_soon_or_when_it_asks() {
     let wait = d.retry_at.unwrap() - now();
     assert!(wait > 40_000 && wait <= 45_000, "waits as asked: {wait} ms");
     assert!(d.error.as_deref().unwrap().contains("retrying in 45s"), "{:?}", d.error);
+}
+
+/// A stand-in for Real-Debrid: its API, plus its download servers at
+/// `/d/<anything>`, which refuse with 410 while `expired` is set for that link.
+struct FakeDebrid {
+    base: String,
+    /// What `/unrestrict/link` answers: status line and JSON. `{base}` is filled in.
+    answer: Mutex<(String, String)>,
+    /// Every request's head, lowercased, with the body of POSTs.
+    log: Mutex<Vec<String>>,
+    data: Arc<Vec<u8>>,
+    delay: Mutex<Duration>,
+    expired: Mutex<Vec<String>>,
+}
+
+impl FakeDebrid {
+    async fn start(data: Arc<Vec<u8>>) -> Arc<Self> {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let fake = Arc::new(Self {
+            base: format!("http://{}", listener.local_addr().unwrap()),
+            answer: Mutex::new(("200 OK".into(), String::new())),
+            log: Mutex::default(),
+            data,
+            delay: Mutex::new(Duration::ZERO),
+            expired: Mutex::default(),
+        });
+        fake.link_is("first");
+        let server = fake.clone();
+        tokio::spawn(async move {
+            loop {
+                let (sock, _) = listener.accept().await.unwrap();
+                let server = server.clone();
+                tokio::spawn(async move { server.handle(sock).await });
+            }
+        });
+        fake
+    }
+
+    /// Unlocking answers with a direct link at `/d/<name>`.
+    fn link_is(&self, name: &str) {
+        let json = format!(
+            r#"{{"id":"1","filename":"Real Name.mp4","filesize":{},"link":"https://rapidgator.net/x","host":"rapidgator.net","chunks":3,"download":"{}/d/{name}"}}"#,
+            self.data.len(),
+            self.base,
+        );
+        *self.answer.lock().unwrap() = ("200 OK".into(), json);
+    }
+
+    fn refuse(&self, status: &str, code: i64, message: &str) {
+        *self.answer.lock().unwrap() = (status.into(), format!(r#"{{"error":"{message}","error_code":{code}}}"#));
+    }
+
+    fn requests_to(&self, path: &str) -> Vec<String> {
+        let path = path.to_ascii_lowercase();
+        self.log.lock().unwrap().iter().filter(|r| r.split_whitespace().nth(1).is_some_and(|p| p.starts_with(&path))).cloned().collect()
+    }
+
+    async fn handle(&self, mut sock: tokio::net::TcpStream) {
+        let mut raw = Vec::new();
+        let mut buf = [0u8; 4096];
+        loop {
+            let Ok(n) = sock.read(&mut buf).await else { return };
+            if n == 0 {
+                return;
+            }
+            raw.extend_from_slice(&buf[..n]);
+            let text = String::from_utf8_lossy(&raw).to_ascii_lowercase();
+            let Some(end) = text.find("\r\n\r\n") else { continue };
+            let want = text.lines().find_map(|l| l.strip_prefix("content-length: ")?.trim().parse::<usize>().ok()).unwrap_or(0);
+            if raw.len() >= end + 4 + want {
+                break;
+            }
+        }
+        let text = String::from_utf8_lossy(&raw).to_ascii_lowercase();
+        self.log.lock().unwrap().push(text.clone());
+        let path = text.split_whitespace().nth(1).unwrap_or("/").to_owned();
+        let json = |status: &str, body: &str| format!("HTTP/1.1 {status}\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body}", body.len());
+        let reply = if path.ends_with("/unrestrict/link") {
+            let (status, body) = self.answer.lock().unwrap().clone();
+            json(&status, &body)
+        } else if path.ends_with("/hosts/domains") {
+            json("200 OK", r#"["rapidgator.net","127.0.0.1"]"#)
+        } else if path.ends_with("/user") {
+            json("200 OK", r#"{"id":1,"username":"someone","type":"premium","premium":100,"expiration":"2027-01-18T04:42:42.000Z"}"#)
+        } else if self.expired.lock().unwrap().iter().any(|l| path.ends_with(l.as_str())) {
+            json("410 Gone", "")
+        } else {
+            return self.send_file(sock, &text).await;
+        };
+        let _ = sock.write_all(reply.as_bytes()).await;
+    }
+
+    async fn send_file(&self, mut sock: tokio::net::TcpStream, head: &str) {
+        let len = self.data.len();
+        let (start, end) = head
+            .lines()
+            .find_map(|l| {
+                let (a, b) = l.strip_prefix("range: bytes=")?.trim().split_once('-')?;
+                Some((a.parse().ok()?, b.parse::<usize>().unwrap_or(len - 1).min(len - 1)))
+            })
+            .unwrap_or((0, len - 1));
+        let reply = format!(
+            "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {start}-{end}/{len}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            end - start + 1
+        );
+        if sock.write_all(reply.as_bytes()).await.is_err() {
+            return;
+        }
+        let delay = *self.delay.lock().unwrap();
+        for chunk in self.data[start..=end].chunks(16 * 1024) {
+            if sock.write_all(chunk).await.is_err() {
+                return;
+            }
+            tokio::time::sleep(delay).await;
+        }
+    }
+}
+
+fn debrid_manager(dir: &Path, fake: &FakeDebrid) -> Manager {
+    let m = manager(dir, |s| s.realdebrid_token = "secret-token".into());
+    m.set_debrid_api(&format!("{}/rest/1.0", fake.base));
+    m
+}
+
+/// A browser hand-off: the host's own page, with its cookies and address.
+fn add_host_link(m: &Manager) -> i64 {
+    m.add(AddRequest {
+        urls: vec!["https://rapidgator.net/file/abc/Real%20Name.mp4.html".into()],
+        file_name: Some("Real Name.mp4.html".into()),
+        headers: vec![("Cookie".into(), "host-session=abc".into()), ("Referer".into(), "https://rapidgator.net/page".into())],
+        start: true,
+        ..Default::default()
+    })
+    .unwrap()[0]
+}
+
+#[tokio::test]
+async fn host_links_download_through_real_debrid() {
+    let body = data(2 << 20);
+    let fake = FakeDebrid::start(body.clone()).await;
+    let dir = tempfile::tempdir().unwrap();
+    let m = debrid_manager(dir.path(), &fake);
+
+    let id = add_host_link(&m);
+    wait_for(&m, id, Status::Completed).await;
+    let d = m.get(id).unwrap().unwrap().download;
+    assert_eq!(std::fs::read(dir.path().join("Real Name.mp4")).unwrap(), *body, "named as Real-Debrid says, not the page");
+    assert_eq!(d.url, "https://rapidgator.net/file/abc/Real%20Name.mp4.html", "the list keeps the original link");
+
+    let api = fake.requests_to("/rest/1.0/unrestrict/link");
+    assert_eq!(api.len(), 1);
+    assert!(api[0].contains("authorization: bearer secret-token"));
+    assert!(api[0].contains("link=https%3a%2f%2frapidgator.net%2ffile%2fabc"), "{}", api[0]);
+    let files = fake.requests_to("/d/first");
+    assert!(!files.is_empty());
+    for request in files {
+        assert!(!request.contains("secret-token"), "the token only goes to the API");
+        assert!(!request.contains("host-session") && !request.contains("referer"), "the host's cookies stay with the host:\n{request}");
+    }
+}
+
+#[tokio::test]
+async fn a_name_the_user_chose_is_kept() {
+    let fake = FakeDebrid::start(data(1 << 20)).await;
+    let dir = tempfile::tempdir().unwrap();
+    let m = debrid_manager(dir.path(), &fake);
+    let id = m.add(AddRequest { urls: vec!["https://rg.to/file/abc".into()], file_name: Some("Mine.mp4".into()), start: true, ..Default::default() }).unwrap()[0];
+    wait_for(&m, id, Status::Completed).await;
+    assert!(dir.path().join("Mine.mp4").exists());
+}
+
+#[tokio::test]
+async fn an_expired_link_is_replaced_and_the_download_carries_on() {
+    let body = data(16 << 20);
+    let fake = FakeDebrid::start(body.clone()).await;
+    *fake.delay.lock().unwrap() = Duration::from_millis(10);
+    let dir = tempfile::tempdir().unwrap();
+    let m = debrid_manager(dir.path(), &fake);
+    let id = add_host_link(&m);
+    wait_for(&m, id, Status::Running).await;
+    for _ in 0..200 {
+        if m.get(id).unwrap().unwrap().download.downloaded > 1 << 20 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+
+    // Pausing drops the connections; the link has expired by the time it resumes.
+    m.pause(id).unwrap();
+    wait_for(&m, id, Status::Paused).await;
+    let kept = m.get(id).unwrap().unwrap().download.downloaded;
+    assert!(kept > 0);
+    fake.expired.lock().unwrap().push("/d/first".into());
+    fake.link_is("second");
+    *fake.delay.lock().unwrap() = Duration::ZERO;
+    m.resume(id).unwrap();
+    wait_for(&m, id, Status::Completed).await;
+
+    assert_eq!(std::fs::read(dir.path().join("Real Name.mp4")).unwrap(), *body);
+    assert!(!dir.path().join("Real Name (1).mp4").exists(), "continued the same file");
+    assert!(!fake.requests_to("/d/second").is_empty());
+    tokio::time::sleep(Duration::from_millis(700)).await;
+    assert_eq!(m.stats().unwrap().lifetime_bytes, body.len() as u64, "what it had wasn't downloaded again");
+}
+
+#[tokio::test]
+async fn a_link_expiring_mid_download_gets_a_new_one_by_itself() {
+    let body = data(16 << 20);
+    let fake = FakeDebrid::start(body.clone()).await;
+    let dir = tempfile::tempdir().unwrap();
+    let m = debrid_manager(dir.path(), &fake);
+    fake.expired.lock().unwrap().push("/d/first".into());
+    // The check of the file also goes to the expired link, as if it had just lapsed.
+    let id = add_host_link(&m);
+    let d = first_retry(&m, id).await;
+    assert_eq!(d.status, Status::Queued, "a refused Real-Debrid link is retried, not failed: {:?}", d.error);
+    fake.link_is("second");
+    wait_for_long(&m, id, Status::Completed).await;
+    assert_eq!(std::fs::read(dir.path().join("Real Name.mp4")).unwrap(), *body);
+}
+
+async fn wait_for_long(m: &Manager, id: i64, status: Status) {
+    for _ in 0..30 {
+        if m.get(id).unwrap().is_some_and(|d| d.download.status == status) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    panic!("download {id} never became {status:?}: {:?}", m.get(id).unwrap().map(|d| d.download));
+}
+
+#[tokio::test]
+async fn what_real_debrid_says_decides_what_happens_next() {
+    let dir = tempfile::tempdir().unwrap();
+
+    // A dead file or a bad token won't fix themselves, and say why.
+    let fake = FakeDebrid::start(data(1 << 20)).await;
+    let m = debrid_manager(dir.path(), &fake);
+    fake.refuse("503 Service Unavailable", 24, "unavailable_file");
+    let id = add_host_link(&m);
+    wait_for(&m, id, Status::Failed).await;
+    let d = m.get(id).unwrap().unwrap().download;
+    assert!(d.error.as_deref().unwrap().contains("no longer available"), "{:?}", d.error);
+    assert_eq!(d.auto_retries, 0);
+
+    fake.refuse("401 Unauthorized", 8, "bad_token");
+    let id = add_host_link(&m);
+    wait_for(&m, id, Status::Failed).await;
+    assert!(m.get(id).unwrap().unwrap().download.error.unwrap().contains("Settings"));
+
+    // A busy host is tried again later.
+    fake.refuse("503 Service Unavailable", 19, "hoster_unavailable");
+    let id = add_host_link(&m);
+    assert_eq!(first_retry(&m, id).await.status, Status::Queued);
+}
+
+#[tokio::test]
+async fn links_real_debrid_cannot_handle_download_directly() {
+    let body = data(1 << 20);
+    let fake = FakeDebrid::start(body.clone()).await;
+    let dir = tempfile::tempdir().unwrap();
+    let m = debrid_manager(dir.path(), &fake);
+    m.refresh_debrid_hosts().await.unwrap();
+    fake.refuse("403 Forbidden", 16, "hoster_unsupported");
+
+    let id = add(&m, format!("{}/direct/plain.bin", fake.base));
+    wait_for(&m, id, Status::Completed).await;
+    assert_eq!(std::fs::read(dir.path().join("plain.bin")).unwrap(), *body);
+    assert_eq!(fake.requests_to("/rest/1.0/unrestrict/link").len(), 1, "it was asked first");
+}
+
+#[tokio::test]
+async fn without_a_token_nothing_goes_to_real_debrid() {
+    let body = data(1 << 20);
+    let fake = FakeDebrid::start(body.clone()).await;
+    let dir = tempfile::tempdir().unwrap();
+    let m = manager(dir.path(), |_| {});
+    m.set_debrid_api(&format!("{}/rest/1.0", fake.base));
+    m.refresh_debrid_hosts().await.unwrap();
+
+    let id = add(&m, format!("{}/direct/plain.bin", fake.base));
+    wait_for(&m, id, Status::Completed).await;
+    assert!(fake.requests_to("/rest/1.0/unrestrict").is_empty());
+    assert!(!m.is_download_link("https://rapidgator.net/file/abc/movie.zip.html"));
+
+    // With one, a copied host link is worth offering, but a general site isn't.
+    let dir = tempfile::tempdir().unwrap();
+    let m = debrid_manager(dir.path(), &fake);
+    assert!(m.is_download_link("https://rapidgator.net/file/abc/movie.mp4.html"));
+    assert!(!m.is_download_link("https://rapidgator.net/"));
+    assert!(!m.is_download_link("https://drive.google.com/file/d/1/view"));
+
+    let account = m.debrid_account("secret-token").await.unwrap();
+    assert_eq!((account.username.as_str(), account.kind.as_str()), ("someone", "premium"));
+    assert_eq!(account.expiration.as_deref(), Some("2027-01-18T04:42:42.000Z"));
+}
+
+/// The app's Save button runs on the UI thread, outside any async runtime.
+#[tokio::test]
+async fn settings_can_be_saved_from_outside_the_runtime() {
+    let fake = FakeDebrid::start(data(1 << 20)).await;
+    let dir = tempfile::tempdir().unwrap();
+    let m = manager(dir.path(), |_| {});
+    m.set_debrid_api(&format!("{}/rest/1.0", fake.base));
+
+    let saver = m.clone();
+    let saved = std::thread::spawn(move || {
+        let mut settings = saver.settings();
+        settings.realdebrid_token = "new-token".into();
+        saver.update_settings(settings).map(|s| s.realdebrid_token)
+    })
+    .join()
+    .expect("saving must not panic: a panic on the UI thread aborts the app");
+    assert_eq!(saved.unwrap(), "new-token");
+    assert_eq!(m.settings().realdebrid_token, "new-token");
+
+    // The new token's arrival still loads the live list of hosts.
+    for _ in 0..100 {
+        if !fake.requests_to("/rest/1.0/hosts/domains").is_empty() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("the host list was never loaded");
 }
